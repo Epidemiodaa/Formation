@@ -10,6 +10,7 @@
  *  - Types de questions : choix unique, choix multiple (tout ou rien), trois dates à choisir, figure ou dessin à choisir, maladies à relier aux prélèvements et aux tubes.
  *  - Les bonnes réponses restent sur le serveur ; le corrigé n'est envoyé qu'après la soumission.
  *  - Un identifiant ne peut soumettre qu'une fois par session et par phase.
+ *  - Durée limitée à 15 minutes : à l'échéance les réponses partent automatiquement ; toute question non renseignée compte comme fausse.
  *  - Le post-test n'est accessible qu'avec un identifiant déjà enregistré au pré-test de la MÊME session.
  *  - Résultats écrits dans le Google Sheet (onglets Resultats et Questions) ; statistiques dans l'espace admin.
  *  - Ce script est seulement l'API (pas de page HTML) : la page index.html est hébergée sur GitHub Pages ou un autre serveur.
@@ -20,6 +21,7 @@ const ADMIN_PASSWORD = 'Silo@2000';
 
 const SHEET_ID = '1hZ7v3_5K2qhD5N4YRmt3C96OsxOIk0iuQdQUwYSrwQc';
 const PHASES = ['Pré-test', 'Post-test'];
+const TIME_LIMIT_SEC = 15 * 60; // durée du test : à l'échéance, la page envoie les réponses ; ce qui n'est pas renseigné compte comme faux
 const COL = { TS: 0, ID: 1, SESSION: 2, PHASE: 3, TITLE: 4, SCORE: 5, PCT: 6, DUR: 7, ORDER: 8 };
 
 /* ------------------------------------------------------------------ */
@@ -468,7 +470,7 @@ function startTest(rawId) {
       return { ok: false, message: NO_PRE_MSG_(id) };
     }
     const order = buildOrder_(id, c.session + '|' + c.phase);
-    return { ok: true, id: id, title: c.title, stamp: c.stamp, items: order.map(publicItem_) };
+    return { ok: true, id: id, title: c.title, stamp: c.stamp, limitSec: TIME_LIMIT_SEC, items: order.map(publicItem_) };
   } catch (err) {
     return { ok: false, message: 'Erreur du serveur : ' + err.message };
   }
@@ -494,18 +496,24 @@ function submitTest(p) {
     }
 
     const answers = p.answers || {};
+    const forced = p.timeout === true; // envoi automatique à la fin des 15 minutes
     const order = buildOrder_(id, c.session + '|' + c.phase);
-    for (let i = 0; i < order.length; i++) {
-      if (!isAnswered_(order[i], answers[order[i].k])) {
-        return { ok: false, message: 'Il reste des questions sans réponse.' };
+    if (!forced) {
+      for (let i = 0; i < order.length; i++) {
+        if (!isAnswered_(order[i], answers[order[i].k])) {
+          return { ok: false, message: 'Il reste des questions sans réponse.' };
+        }
       }
     }
 
     let score = 0;
+    let unanswered = 0;
     const okByQuestion = {};
     const items = order.map(function (it, idx) {
       const v = answers[it.k];
-      const ok = isCorrect_(it, v);
+      const answered = isAnswered_(it, v);
+      const ok = answered && isCorrect_(it, v);
+      if (!answered) unanswered++;
       if (ok) score++;
       okByQuestion[it.k] = ok ? 1 : 0;
       const q = it.def;
@@ -517,7 +525,7 @@ function submitTest(p) {
         ctxTable: q.ctxTable || null,
         rptDisease: q.rptDisease || null,
         chartData: q.chartData || null,
-        chosen: chosenList_(it, v),
+        chosen: answered ? chosenList_(it, v) : [{ t: 'Pas de réponse (compte comme fausse)' }],
         correct: correctList_(it),
         ok: ok,
         e: q.e
@@ -526,15 +534,16 @@ function submitTest(p) {
 
     const total = order.length;
     const pct = Math.round(score * 100 / total);
-    const duration = Math.max(0, Math.round(Number(p.duration) || 0));
+    const duration = forced ? TIME_LIMIT_SEC : Math.max(0, Math.round(Number(p.duration) || 0));
     const row = [new Date(), id, c.session, c.phase, c.title, score, pct, duration,
                  order.map(function (o) { return o.k; }).join('>')];
     for (let q = 1; q <= total; q++) row.push(okByQuestion['Q' + q]);
+    row.push(forced ? 'Oui' : 'Non', unanswered);
 
     ss.getSheetByName('Resultats').appendRow(row);
     SpreadsheetApp.flush();
 
-    return { ok: true, id: id, title: c.title, phase: c.phase, score: score, total: total, pct: pct, items: items };
+    return { ok: true, id: id, title: c.title, phase: c.phase, score: score, total: total, pct: pct, timedOut: forced, unanswered: unanswered, items: items };
   } catch (err) {
     return { ok: false, message: 'Enregistrement impossible : ' + err.message + ' — réessayez.' };
   } finally {
@@ -720,6 +729,7 @@ function ensureSheets_() {
     res = ss.insertSheet('Resultats');
     const head = ['Horodatage', 'ID', 'Session', 'Phase', 'Titre de l’activité', 'Score /' + total, 'Pourcentage', 'Durée (s)', 'Ordre des questions'];
     for (let q = 1; q <= total; q++) head.push('Q' + q);
+    head.push('Temps écoulé', 'Sans réponse');
     res.getRange(1, 1, 1, head.length).setValues([head])
       .setFontWeight('bold').setBackground('#0f5c5c').setFontColor('#ffffff');
     res.setFrozenRows(1);

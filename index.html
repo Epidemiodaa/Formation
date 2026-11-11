@@ -109,6 +109,8 @@
   .tube svg{width:100%;max-width:48px;height:auto}
   .tcap{text-align:center}
   .cap{font-size:13px;color:var(--mut);text-align:center;margin-top:2px}
+  .timer{font-weight:700;background:var(--teal-l);color:var(--teal-d);border-radius:999px;padding:3px 12px;font-size:14px;white-space:nowrap}
+  .timer.low{background:var(--ko-l);color:var(--ko)}
   /* admin */
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   .tablewrap{overflow-x:auto}
@@ -154,6 +156,7 @@
         <li>20 questions. Pour certaines, <b>plusieurs réponses sont possibles</b> : le point n’est accordé que si toutes les bonnes réponses, et seulement elles, sont cochées (tout ou rien).</li>
         <li>Répondez <b>seul</b>, sans document et sans téléphone.</li>
         <li>L’ordre des questions est différent d’une personne à l’autre.</li>
+        <li><b>Durée : 15 minutes</b> à partir du clic sur « Commencer ». À la fin du temps, vos réponses sont envoyées automatiquement et les questions sans réponse comptent comme fausses.</li>
         <li>Le test sert à mesurer vos progrès, pas à vous sanctionner.</li>
         <li>Après l’envoi de vos réponses, le <b>corrigé</b> s’affiche. Une fois envoyé, le test ne peut plus être modifié.</li>
       </ul>
@@ -165,7 +168,7 @@
   <!-- QUESTIONS -->
   <section id="s-quiz" hidden>
     <div class="card">
-      <div class="qhead"><span id="qCount"></span></div>
+      <div class="qhead"><span id="qCount"></span><span id="timer" class="timer">⏱ 15:00</span></div>
       <div class="prog"><div id="bar"></div></div>
       <p id="qText" class="qtext"></p>
       <div id="qCtx"></div>
@@ -190,6 +193,7 @@
       <div class="sub" id="resPct"></div>
       <div class="meter"><div id="resMeter" style="width:0"></div></div>
       <p id="resMsg"></p>
+      <div id="resNote" class="note" hidden></div>
       <div class="idbox" id="resId"></div>
     </div>
     <h2 style="margin:18px 4px 10px">Corrigé</h2>
@@ -234,6 +238,17 @@
         <button id="btnSaveCfg" class="btn" type="button">Enregistrer</button>
         <button id="btnLogout" class="btn ghost" type="button">Quitter l’espace admin</button>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>Message WhatsApp pour les participants</h2>
+      <div class="hint" style="margin:0 0 8px">Le message change selon le test choisi (pré-test ou post-test) et reprend le titre de l’activité et le lien de cette page. Vous pouvez le modifier avant de l’envoyer.</div>
+      <textarea id="waMsg" rows="12" style="width:100%;font:inherit;font-size:15px;padding:10px;border:2px solid var(--line);border-radius:10px"></textarea>
+      <div class="toolbar">
+        <button id="btnWaCopy" class="btn ghost" type="button">Copier le message</button>
+        <button id="btnWaSend" class="btn" type="button">Envoyer par WhatsApp</button>
+      </div>
+      <div id="waInfo" class="hint"></div>
     </div>
 
     <div class="card">
@@ -347,8 +362,9 @@ var API = {
         S.sending = false; $('btnStart').disabled = false; $('btnStart').textContent = 'Commencer le test';
         if(!r || !r.ok){ msg('startErr', (r && r.message) || 'Erreur inconnue.'); return; }
         S.id = r.id; S.stamp = r.stamp; S.title = r.title; S.items = r.items; S.ans = {}; S.cur = 0;
-        S.t0 = Date.now(); S.active = true;
-        show('s-quiz'); render();
+        S.t0 = Date.now(); S.active = true; S.timedUp = false;
+        S.limitSec = r.limitSec || 900; S.deadline = S.t0 + S.limitSec * 1000;
+        show('s-quiz'); render(); startTimer();
       })
       .withFailureHandler(function(){
         S.sending = false; $('btnStart').disabled = false; $('btnStart').textContent = 'Commencer le test';
@@ -366,6 +382,28 @@ var API = {
     return a !== undefined;
   }
   function answeredCount(){ return S.items.filter(isAnswered).length; }
+
+  /* ---------- Minuteur (15 min) ---------- */
+  var TIMER = null;
+  function fmtTime(sec){ var m = Math.floor(sec / 60), s = sec % 60; return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s; }
+  function tick(){
+    var left = Math.max(0, Math.round((S.deadline - Date.now()) / 1000));
+    $('timer').textContent = '⏱ ' + fmtTime(left);
+    $('timer').className = 'timer' + (left <= 120 ? ' low' : '');
+    if (left <= 0 && S.active && !S.timedUp){ S.timedUp = true; stopTimer(); autoSubmit(); }
+  }
+  function startTimer(){ stopTimer(); tick(); TIMER = setInterval(tick, 1000); }
+  function stopTimer(){ if (TIMER){ clearInterval(TIMER); TIMER = null; } }
+  function lockIfTimedUp(){
+    if (!S.timedUp) return;
+    Array.prototype.forEach.call(document.querySelectorAll('#opts button, #opts select, #grid button, #btnPrev, #btnNext'), function(e){ e.disabled = true; });
+    $('btnNext').hidden = true; $('btnSubmit').hidden = false;
+  }
+  function autoSubmit(){
+    render();
+    msg('quizErr', 'Temps écoulé : vos réponses sont envoyées automatiquement. Les questions sans réponse comptent comme fausses.', 'note');
+    sendAnswers(true);
+  }
 
   var NS = 'http://www.w3.org/2000/svg';
   // Dessin d'une ligne du rapport hebdomadaire : Suspect / Décès / Confirmé, < 5 ans et ≥ 5 ans, M et F, Total
@@ -607,6 +645,7 @@ var API = {
     $('btnNext').hidden = last;
     $('btnSubmit').hidden = !last;
     updateNav();
+    lockIfTimedUp();
   }
 
   function updateNav(){
@@ -627,28 +666,34 @@ var API = {
 
   function submit(){
     if (S.sending) return;
+    if (S.timedUp){ sendAnswers(true); return; }
     var miss = -1;
     for (var i=0;i<S.items.length;i++){ if (!isAnswered(S.items[i])){ miss = i; break; } }
     if (miss >= 0){
       S.cur = miss; render();
-      msg('quizErr', 'Il reste des questions sans réponse. Répondez à la question n° ' + (miss+1) + ' (les cases numérotées du bas mènent aux autres).');
+      msg('quizErr', 'Il reste des questions sans réponse. Répondez à la question n° ' + (miss+1) + ' (les cases numérotées du bas mènent aux autres).', 'err');
       return;
     }
+    sendAnswers(false);
+  }
+
+  function sendAnswers(timeout){
+    if (S.sending) return;
     S.sending = true;
     $('btnSubmit').disabled = true; $('btnSubmit').textContent = 'Envoi en cours…';
-    msg('quizErr','');
+    if (!timeout) msg('quizErr','');
     API.run()
       .withSuccessHandler(function(r){
         S.sending = false; $('btnSubmit').disabled = false; $('btnSubmit').textContent = 'Envoyer mes réponses';
-        if(!r || !r.ok){ msg('quizErr', (r && r.message) || 'Erreur inconnue.'); return; }
-        S.active = false;
+        if(!r || !r.ok){ msg('quizErr', (r && r.message) || 'Erreur inconnue.', 'err'); return; }
+        S.active = false; stopTimer();
         renderResult(r);
       })
       .withFailureHandler(function(){
         S.sending = false; $('btnSubmit').disabled = false; $('btnSubmit').textContent = 'Envoyer mes réponses';
-        msg('quizErr', 'Envoi impossible : vos réponses sont conservées. Vérifiez le réseau puis cliquez de nouveau sur « Envoyer ».');
+        msg('quizErr', 'Envoi impossible : vos réponses sont conservées. Vérifiez le réseau puis cliquez de nouveau sur « Envoyer mes réponses ».', 'err');
       })
-      .submitTest({ id:S.id, stamp:S.stamp, answers:S.ans, duration: Math.round((Date.now()-S.t0)/1000) });
+      .submitTest({ id:S.id, stamp:S.stamp, answers:S.ans, timeout: !!timeout, duration: Math.round((Date.now()-S.t0)/1000) });
   }
 
   function fillList(box, list, x){
@@ -672,6 +717,11 @@ var API = {
       m = 'Des points restent à revoir : relisez le corrigé ci-dessous avec attention.';
     }
     $('resMsg').textContent = m;
+    var rn = $('resNote');
+    if (r.timedOut){
+      rn.textContent = 'Temps écoulé : vos réponses ont été envoyées automatiquement à la fin des 15 minutes. ' + r.unanswered + ' question(s) sans réponse comptent comme fausses.';
+      rn.hidden = false;
+    } else { rn.hidden = true; }
     $('resId').textContent = (r.phase === 'Pré-test')
       ? 'Conservez votre identifiant ' + r.id + ' : il sera demandé au post-test.'
       : 'Vos tests sont liés par l’identifiant ' + r.id + '.';
@@ -697,6 +747,7 @@ var API = {
   }
 
   $('btnDone').addEventListener('click', function(){
+    stopTimer();
     S = { id:'', stamp:'', title:'', items:[], ans:{}, cur:0, t0:0, active:false, sending:false };
     $('idInput').value = '';
     msg('startErr','');
@@ -733,6 +784,7 @@ var API = {
     for (var i=0;i<radios.length;i++){ radios[i].checked = (radios[i].value === (c.phase || 'Pré-test')); }
     $('cfgOpen').checked = !!c.open;
     setStatus(!!c.open && !!c.title);
+    refreshWa();
   }
   function setStatus(open){
     var s = $('admStatus'); s.textContent = open ? 'Ouverte' : 'Fermée'; s.className = 'status ' + (open ? 'open' : 'closed');
@@ -889,6 +941,48 @@ var API = {
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
     } catch (e) {}
     $('chartImg').src = url; $('chartImgBox').hidden = false;
+  });
+
+  /* ---- Message WhatsApp ---- */
+  function waText(){
+    var title = $('cfgTitle').value.trim() || '[titre de l’activité]';
+    var phase = document.querySelector('input[name=cfgPhase]:checked').value;
+    var link = location.origin + location.pathname;
+    if (phase === 'Pré-test'){
+      return 'Bonjour 👋\n\n' +
+        'Dans le cadre de la formation sur la surveillance épidémiologique (' + title + '), vous êtes invité(e) à passer le *PRÉ-TEST* : 20 questions.\n\n' +
+        '👉 Lien : ' + link + '\n\n' +
+        'Avant de commencer :\n' +
+        '• Saisissez votre *identifiant unique* (2 caractères ou plus, lettres avec ou sans chiffres) et *notez-le* : il vous sera demandé au post-test.\n' +
+        '• Répondez seul(e), sans document ni téléphone.\n' +
+        '• Ce test mesure votre point de départ, il ne sert pas à vous sanctionner.\n' +
+        '• Le corrigé s’affiche après l’envoi de vos réponses.\n\n' +
+        'Merci de votre participation.';
+    }
+    return 'Bonjour 👋\n\n' +
+      'Suite à la formation sur la surveillance épidémiologique (' + title + '), vous êtes invité(e) à passer le *POST-TEST* : 20 questions.\n\n' +
+      '👉 Lien : ' + link + '\n\n' +
+      'Avant de commencer :\n' +
+      '• Utilisez *exactement le même identifiant* que celui du pré-test : sans lui, le post-test ne sera pas accepté.\n' +
+      '• Si vous l’avez oublié, demandez-le à l’animateur.\n' +
+      '• Répondez seul(e), sans document ni téléphone.\n' +
+      '• Le corrigé s’affiche après l’envoi de vos réponses.\n\n' +
+      'Merci de votre participation.';
+  }
+  function refreshWa(){ $('waMsg').value = waText(); }
+  $('cfgTitle').addEventListener('input', refreshWa);
+  Array.prototype.forEach.call(document.getElementsByName('cfgPhase'), function(r){ r.addEventListener('change', refreshWa); });
+  $('btnWaSend').addEventListener('click', function(){
+    window.open('https://wa.me/?text=' + encodeURIComponent($('waMsg').value), '_blank');
+  });
+  $('btnWaCopy').addEventListener('click', function(){
+    var t = $('waMsg').value;
+    function ok(){ $('waInfo').textContent = 'Message copié : collez-le dans WhatsApp.'; }
+    function fallback(){
+      $('waMsg').focus(); $('waMsg').select();
+      try { document.execCommand('copy'); ok(); } catch (e) { $('waInfo').textContent = 'Sélectionnez le texte et copiez-le manuellement.'; }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(ok, fallback); } else { fallback(); }
   });
 
   loadConfig();

@@ -7,7 +7,7 @@
  *    d'activité visible par tous et une session/classe (sert à comparer pré et post), puis ouvre le formulaire.
  *  - Les participants saisissent seulement leur identifiant unique et passent la phase activée.
  *  - Les 20 questions (et leurs choix) sont mélangées pour chaque personne et chaque activité.
- *  - Types de questions : choix unique, choix multiple (tout ou rien), trois dates à choisir, figure de rapport à choisir.
+ *  - Types de questions : choix unique, choix multiple (tout ou rien), trois dates à choisir, figure ou dessin à choisir, maladies à relier aux prélèvements et aux tubes.
  *  - Les bonnes réponses restent sur le serveur ; le corrigé n'est envoyé qu'après la soumission.
  *  - Un identifiant ne peut soumettre qu'une fois par session et par phase.
  *  - Le post-test n'est accessible qu'avec un identifiant déjà enregistré au pré-test de la MÊME session.
@@ -63,10 +63,15 @@ const QUESTIONS = [
     e: 'Shigellose : diarrhée accompagnée d’une présence physique de sang rouge dans les selles.'
   },
   {
-    q: 'Un cas suspect de PFA est un enfant de moins de :',
-    o: ['5 ans', '18 ans', '15 ans'],
-    a: 2,
-    e: 'PFA : tout enfant de moins de 15 ans avec une paralysie flasque aiguë de début brutal, sans notion de traumatisme.'
+    q: 'Quelle est la définition d’un cas de PFA (cas suspect de poliomyélite) ?',
+    o: [
+      'Tout enfant de moins de 15 ans avec une paralysie flasque de début brutal, sans notion de traumatisme',
+      'Tout enfant de moins de 5 ans avec une fièvre et une éruption cutanée',
+      'Tout adulte avec une paralysie spastique installée depuis plus d’un mois',
+      'Tout enfant de moins de 15 ans avec une paralysie survenue après une chute ou une fracture'
+    ],
+    a: 0,
+    e: 'Cas de PFA (cas suspect de poliomyélite) : tout enfant de moins de 15 ans avec un trouble de la marche, une boiterie ou une paralysie flasque (même transitoire), de début brutal et sans notion de traumatisme.'
   },
   {
     q: 'Un cas suspect de fièvre jaune associe une fièvre brutale et :',
@@ -81,10 +86,22 @@ const QUESTIONS = [
     e: 'Choléra : diarrhée aqueuse aiguë, avec ou sans déshydratation.'
   },
   {
-    q: 'Les échantillons sont transportés entre :',
-    o: ['+2 et +8 °C', '+20 et +25 °C', '−20 et −10 °C'],
-    a: 0,
-    e: 'Les échantillons sont acheminés au laboratoire entre +2 et +8 °C, avec la fiche IDS remplie.'
+    type: 'match',
+    q: 'Pour chaque maladie, indiquez le prélèvement à faire, puis le contenant (tube ou pot) à utiliser.',
+    pre: ['Sang', 'Selles', 'Urines', 'Prélèvement de gorge'],
+    tubes: [
+      { id: 'dry', t: 'Tube sec (bouchon rouge)' },
+      { id: 'edta', t: 'Tube à bouchon violet' },
+      { id: 'green', t: 'Tube à bouchon vert' },
+      { id: 'pot', t: 'Pot à selles' }
+    ],
+    rows: [
+      { label: 'Rougeole', p: 0, t: 0 },
+      { label: 'Fièvre jaune', p: 0, t: 0 },
+      { label: 'PFA', p: 1, t: 3 },
+      { label: 'Shigellose', p: 1, t: 3 }
+    ],
+    e: 'Rougeole et fièvre jaune : prélèvement de sang, dans un tube sec. PFA : deux prélèvements de selles, à 24 heures d’intervalle, dans un pot à selles. Shigellose : prélèvement de selles, dans un pot à selles. Tous les prélèvements sont acheminés au laboratoire entre +2 et +8 °C, avec la fiche IDS remplie.'
   },
   {
     q: 'Devant un cas suspect de MPE, il faut :',
@@ -205,7 +222,7 @@ const QUESTIONS = [
 
   // ---------- Tracé de la courbe ----------
   {
-    q: 'Quelle est l’utilité essentielle du tracé de la courbe de notification hebdomadaire ?',
+    q: 'Quelle est l’utilité essentielle du tracé de la courbe épidémique ?',
     o: [
       'Suivre l’évolution des cas et se repérer dans le temps',
       'Remplacer la fiche IDS',
@@ -213,21 +230,23 @@ const QUESTIONS = [
       'Calculer la couverture vaccinale'
     ],
     a: 0,
-    e: 'La courbe permet de suivre l’évolution des cas semaine après semaine et de se repérer dans le temps : on voit si le nombre de cas augmente ou baisse.'
+    e: 'La courbe épidémique permet de suivre l’évolution des cas semaine après semaine et de se repérer dans le temps : on voit si le nombre de cas augmente ou baisse.'
   },
   {
-    q: 'Comment représente-t-on les cas de chaque semaine sur la fiche de tracé ?',
+    q: 'Quel dessin correspond au tracé de la courbe épidémique ?',
+    chartData: [0, 1, 0, 2, 3, 5, 8, 11, 7, 4, 2, 1],
     o: [
-      'Par une colonne par semaine, dont la hauteur correspond au nombre de cas (histogramme)',
-      'Par une ligne continue qui relie un point par semaine',
-      'Par un secteur d’un cercle (camembert)',
-      'Par un tableau de chiffres, sans dessin'
+      { chart: 'pie', t: 'Camembert' },
+      { chart: 'line', t: 'Diagramme en ligne' },
+      { chart: 'curve', t: 'Courbe' },
+      { chart: 'histo', t: 'Histogramme (colonnes collées)' },
+      { chart: 'bars', t: 'Diagramme en barres' }
     ],
-    a: 0,
-    e: 'La fiche de tracé est un histogramme : 1 colonne = 1 semaine, remplie jusqu’à la hauteur du nombre de cas (1 carreau = 1 cas).'
+    a: 3,
+    e: 'La courbe épidémique se trace en histogramme : une colonne par semaine, les colonnes collées les unes aux autres, chacune remplie jusqu’à la hauteur du nombre de cas (1 carreau = 1 cas). Ce n’est ni un camembert, ni une ligne ou une courbe lissée, ni un diagramme en barres dont les barres sont séparées.'
   },
   {
-    q: 'En semaine 8, le rapport hebdomadaire indique 11 cas suspects. Que fait-on sur la fiche de courbe ?',
+    q: 'En semaine 8, le rapport hebdomadaire indique 11 cas suspects. Que fait-on sur la courbe épidémique ?',
     o: [
       'On remplit la colonne de la semaine 8 jusqu’à 11 carreaux',
       'On remplit la colonne 11 jusqu’à 8 carreaux',
@@ -238,15 +257,46 @@ const QUESTIONS = [
     e: 'On repère la colonne de la semaine (8) et on la remplit jusqu’à la hauteur du nombre de cas : 1 carreau = 1 cas, donc 11 carreaux. On trace à partir du total des cas suspects.'
   },
   {
-    q: 'Sur la courbe, le seuil d’alerte est franchi. Que fait-on ?',
+    type: 'multi',
+    fixed: true,
+    q: 'Pour quels événements prioritaires faut-il tracer la courbe épidémique ?',
     o: [
-      'On attend les résultats du laboratoire',
-      'On attend la semaine suivante pour voir la tendance',
-      'On notifie la zone sanitaire sans attendre',
-      'On attend qu’un décès soit notifié'
+      'Anthrax',
+      'Choléra',
+      'Décès de 5 ans et plus',
+      'Décès infantile',
+      'Décès infanto-juvénile',
+      'Décès maternel',
+      'Décès néonatals',
+      'Dengue',
+      'Dracunculose',
+      'Fièvre de Lassa',
+      'Fièvre jaune',
+      'Fièvre typhoïde',
+      'Grippe HP',
+      'Hépatites',
+      'Intoxication',
+      'Lèpre',
+      'Méningite',
+      'Morsure de chien',
+      'Mpox',
+      'Near miss',
+      'Noma',
+      'Paludisme grave',
+      'Paludisme simple',
+      'Peste',
+      'PFA',
+      'Pian',
+      'Rage',
+      'Rougeole',
+      'Shigellose',
+      'Syphilis endémique',
+      'Tétanos néonatal',
+      'Ulcère de Buruli',
+      'Zika'
     ],
-    a: 2,
-    e: 'Seuil d’alerte franchi : on notifie la zone sanitaire sans attendre, sans attendre la confirmation du laboratoire.'
+    a: [1, 2, 5, 6, 7, 9, 10, 16, 17, 18, 24, 26, 27, 28, 30],
+    e: 'Les événements prioritaires pour lesquels on trace la courbe épidémique sont : choléra, méningite, fièvre jaune, tétanos néonatal, PFA, rougeole, shigellose, rage, fièvre de Lassa, dengue, mpox, morsure de chien, décès maternel, décès néonatals et décès de 5 ans et plus.'
   }
 ];
 
@@ -466,6 +516,7 @@ function submitTest(p) {
         ctx: q.ctx || null,
         ctxTable: q.ctxTable || null,
         rptDisease: q.rptDisease || null,
+        chartData: q.chartData || null,
         chosen: chosenList_(it, v),
         correct: correctList_(it),
         ok: ok,
@@ -513,9 +564,9 @@ function buildOrder_(id, activityKey) {
   return qs.map(function (x) {
     const q = x.q;
     const it = { k: 'Q' + (x.i + 1), type: q.type || 'single', def: q };
-    if (it.type !== 'dates') {
+    if (it.type !== 'dates' && it.type !== 'match') {
       const opts = q.o.map(function (o, c) { return Object.assign({ c: c }, optObj_(o)); });
-      shuffle_(opts, rnd);
+      if (!q.fixed) shuffle_(opts, rnd); // liste longue : ordre alphabétique conservé
       it.opts = opts;
     }
     return it;
@@ -531,7 +582,12 @@ function publicItem_(it) {
   if (q.ctx) out.ctx = q.ctx;
   if (q.ctxTable) out.ctxTable = q.ctxTable;
   if (q.rptDisease) out.rptDisease = q.rptDisease;
-  if (it.type === 'dates') {
+  if (q.chartData) out.chartData = q.chartData;
+  if (it.type === 'match') {
+    out.rows = q.rows.map(function (r) { return { label: r.label }; });
+    out.pre = q.pre.map(function (t, c) { return { c: c, t: t }; });
+    out.tubes = q.tubes.map(function (x, c) { return { c: c, id: x.id, t: x.t }; });
+  } else if (it.type === 'dates') {
     out.dates = q.dates.map(function (f) {
       return { k: f.k, label: f.label, options: f.o.map(function (t, c) { return { c: c, t: t }; }) };
     });
@@ -545,6 +601,14 @@ function inRange_(v, n) { return typeof v === 'number' && isFinite(v) && Math.fl
 
 function isAnswered_(it, v) {
   const q = it.def;
+  if (it.type === 'match') {
+    if (!v || typeof v !== 'object') return false;
+    return q.rows.every(function (r, i) {
+      const x = v[i];
+      return !!x && x.p !== null && x.p !== '' && x.t !== null && x.t !== '' &&
+             inRange_(Number(x.p), q.pre.length) && inRange_(Number(x.t), q.tubes.length);
+    });
+  }
   if (it.type === 'dates') {
     if (!v || typeof v !== 'object') return false;
     return q.dates.every(function (f) { return inRange_(Number(v[f.k]), f.o.length) && v[f.k] !== '' && v[f.k] !== null; });
@@ -565,6 +629,9 @@ function uniqSorted_(v) {
 /** Tout ou rien pour les choix multiples et pour les trois dates. */
 function isCorrect_(it, v) {
   const q = it.def;
+  if (it.type === 'match') {
+    return q.rows.every(function (r, i) { return Number(v[i].p) === r.p && Number(v[i].t) === r.t; });
+  }
   if (it.type === 'multi') {
     const got = uniqSorted_(v);
     const exp = q.a.slice().sort(function (a, b) { return a - b; });
@@ -578,6 +645,9 @@ function isCorrect_(it, v) {
 
 function chosenList_(it, v) {
   const q = it.def;
+  if (it.type === 'match') {
+    return q.rows.map(function (r, i) { return { t: r.label + ' : ' + q.pre[Number(v[i].p)] + ' · ' + q.tubes[Number(v[i].t)].t }; });
+  }
   if (it.type === 'dates') return q.dates.map(function (f) { return { t: f.label + ' : ' + f.o[Number(v[f.k])] }; });
   if (it.type === 'multi') return uniqSorted_(v).map(function (c) { return optObj_(q.o[c]); });
   return [optObj_(q.o[Number(v)])];
@@ -585,6 +655,9 @@ function chosenList_(it, v) {
 
 function correctList_(it) {
   const q = it.def;
+  if (it.type === 'match') {
+    return q.rows.map(function (r) { return { t: r.label + ' : ' + q.pre[r.p] + ' · ' + q.tubes[r.t].t }; });
+  }
   if (it.type === 'dates') return q.dates.map(function (f) { return { t: f.label + ' : ' + f.o[f.a] }; });
   if (it.type === 'multi') return q.a.map(function (c) { return optObj_(q.o[c]); });
   return [optObj_(q.o[q.a])];

@@ -94,6 +94,21 @@
   .dfield{margin-bottom:12px}
   .dfield select{width:100%;font-size:17px;padding:11px;border:2px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
   .line{margin:4px 0}
+  #opts.optgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  #opts.optgrid .opt{margin:0;flex-direction:column;align-items:center;gap:6px}
+  #opts.optgrid .ltr{flex:0 0 auto;width:28px;height:28px}
+  #opts.optgrid .optbody{width:100%;flex:0 0 auto}
+  svg.chart{display:block;width:100%;height:auto}
+  .mrow{border:2px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px}
+  .mname{font-weight:700;font-size:16px;margin-bottom:4px}
+  .lbl2{font-size:13px;color:var(--mut);margin:6px 0 4px}
+  .mrow select{width:100%;font-size:16px;padding:10px;border:2px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
+  .tubes{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .tube{border:2px solid var(--line);border-radius:10px;background:#fff;padding:4px 2px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;line-height:1.2;color:var(--ink)}
+  .tube.sel{border-color:var(--teal);background:var(--teal-l)}
+  .tube svg{width:100%;max-width:48px;height:auto}
+  .tcap{text-align:center}
+  .cap{font-size:13px;color:var(--mut);text-align:center;margin-top:2px}
   /* admin */
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   .tablewrap{overflow-x:auto}
@@ -347,6 +362,7 @@ var API = {
     var a = S.ans[it.k];
     if (it.type === 'multi') return Array.isArray(a) && a.length > 0;
     if (it.type === 'dates') return !!a && it.dates.every(function(f){ return a[f.k] !== undefined; });
+    if (it.type === 'match') return !!a && it.rows.every(function(r, i){ return a[i] && a[i].p !== undefined && a[i].t !== undefined; });
     return a !== undefined;
   }
   function answeredCount(){ return S.items.filter(isAnswered).length; }
@@ -390,8 +406,89 @@ var API = {
     }
     return svg;
   }
-  function fillContent(node, opt, disease){
-    if (opt.rpt) node.appendChild(svgReport(opt.rpt, disease));
+  // Dessins de courbe : camembert, ligne, courbe lissée, histogramme (colonnes collées), barres séparées
+  function svgChart(kind, data, label){
+    var W = 300, H = 190, L = 34, R = 292, T = 14, B = 160;
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('class', 'chart');
+    svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', label || 'Dessin');
+    function add(tag, attrs){
+      var e = document.createElementNS(NS, tag);
+      for (var k in attrs){ e.setAttribute(k, attrs[k]); }
+      svg.appendChild(e); return e;
+    }
+    var FILL = '#3b8f8a', EDGE = '#0b4f4f';
+    var sum = data.reduce(function(a, b){ return a + b; }, 0);
+    if (kind === 'pie'){
+      var cx = 150, cy = 95, r = 82, ang = -Math.PI / 2;
+      var pal = ['#0f6b6b', '#6b9ac4', '#9ccbc6', '#d2e8e5', '#4a7f9c', '#b7c9d6'], c = 0;
+      data.forEach(function(v){
+        if (v <= 0) return;
+        var a2 = ang + v / sum * 2 * Math.PI;
+        var x1 = cx + r * Math.cos(ang), y1 = cy + r * Math.sin(ang), x2 = cx + r * Math.cos(a2), y2 = cy + r * Math.sin(a2);
+        add('path', { d: 'M' + cx + ' ' + cy + ' L' + x1 + ' ' + y1 + ' A' + r + ' ' + r + ' 0 ' + (a2 - ang > Math.PI ? 1 : 0) + ' 1 ' + x2 + ' ' + y2 + ' Z',
+                      fill: pal[c++ % pal.length], stroke: '#ffffff', 'stroke-width': 1.5 });
+        ang = a2;
+      });
+      return svg;
+    }
+    var max = Math.max.apply(null, data), n = data.length, slot = (R - L) / n;
+    function X(i){ return L + slot * (i + 0.5); }
+    function Y(v){ return B - (v / max) * (B - T - 6); }
+    add('line', { x1: L, y1: T, x2: L, y2: B, stroke: '#16302f', 'stroke-width': 1.5 });
+    add('line', { x1: L, y1: B, x2: R, y2: B, stroke: '#16302f', 'stroke-width': 1.5 });
+    var t1 = add('text', { x: 4, y: 12, 'font-size': 11, 'font-family': 'Arial, sans-serif', fill: '#5d7472' }); t1.textContent = 'Cas';
+    var t2 = add('text', { x: R, y: 182, 'font-size': 11, 'text-anchor': 'end', 'font-family': 'Arial, sans-serif', fill: '#5d7472' }); t2.textContent = 'Semaines';
+    if (kind === 'histo' || kind === 'bars'){
+      var bw = kind === 'histo' ? slot : slot * 0.55;
+      data.forEach(function(v, i){
+        if (v <= 0) return;
+        var x = kind === 'histo' ? L + slot * i : X(i) - bw / 2;
+        add('rect', { x: x, y: Y(v), width: bw, height: B - Y(v), fill: FILL, stroke: EDGE, 'stroke-width': 1 });
+      });
+    } else {
+      var pts = data.map(function(v, i){ return [X(i), Y(v)]; });
+      if (kind === 'line'){
+        add('polyline', { points: pts.map(function(p){ return p[0] + ',' + p[1]; }).join(' '), fill: 'none', stroke: EDGE, 'stroke-width': 2 });
+        pts.forEach(function(p){ add('circle', { cx: p[0], cy: p[1], r: 3, fill: EDGE }); });
+      } else {
+        var d = 'M' + pts[0][0] + ' ' + pts[0][1];
+        for (var i = 0; i < pts.length - 1; i++){
+          var p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+          d += ' C' + (p1[0] + (p2[0] - p0[0]) / 6) + ' ' + (p1[1] + (p2[1] - p0[1]) / 6) + ' ' +
+               (p2[0] - (p3[0] - p1[0]) / 6) + ' ' + (p2[1] - (p3[1] - p1[1]) / 6) + ' ' + p2[0] + ' ' + p2[1];
+        }
+        add('path', { d: d, fill: 'none', stroke: EDGE, 'stroke-width': 2.5 });
+      }
+    }
+    return svg;
+  }
+
+  // Contenants : tubes à bouchon coloré et pot à selles
+  function svgTube(id){
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 56 96'); svg.setAttribute('aria-hidden', 'true');
+    function add(tag, attrs){ var e = document.createElementNS(NS, tag); for (var k in attrs){ e.setAttribute(k, attrs[k]); } svg.appendChild(e); }
+    if (id === 'pot'){
+      add('rect', { x: 8, y: 34, width: 40, height: 12, rx: 3, fill: '#f1f1f1', stroke: '#7a8b99', 'stroke-width': 2 });
+      add('rect', { x: 6, y: 46, width: 44, height: 42, rx: 7, fill: '#f4f8fb', stroke: '#7a8b99', 'stroke-width': 2 });
+      add('rect', { x: 9, y: 62, width: 38, height: 23, rx: 5, fill: '#8a6a45' });
+    } else {
+      var cap = { dry: '#c62828', edta: '#6a3fa0', green: '#2e7d32' }[id] || '#888';
+      add('rect', { x: 13, y: 4, width: 30, height: 15, rx: 3, fill: cap });
+      add('path', { d: 'M16 19 H40 V72 A12 12 0 0 1 16 72 Z', fill: '#f4f8fb', stroke: '#7a8b99', 'stroke-width': 2 });
+      add('path', { d: 'M17 46 H39 V72 A11 11 0 0 1 17 72 Z', fill: '#9b1c1c' });
+    }
+    return svg;
+  }
+
+  function fillContent(node, opt, ctx){
+    if (opt.chart){
+      var w = el('div', ''); w.appendChild(svgChart(opt.chart, ctx.chartData, opt.t));
+      node.appendChild(w);
+      if (ctx.showCaption) node.appendChild(el('div', 'cap', opt.t));
+    }
+    else if (opt.rpt) node.appendChild(svgReport(opt.rpt, ctx.rptDisease));
     else node.appendChild(document.createTextNode(opt.t));
   }
   function buildCtx(box, it){
@@ -412,6 +509,38 @@ var API = {
     }
   }
 
+  function renderMatch(it, box){
+    it.rows.forEach(function(r, i){
+      var cur = (S.ans[it.k] || {})[i] || {};
+      var card = el('div', 'mrow'); card.appendChild(el('div', 'mname', r.label));
+      card.appendChild(el('div', 'lbl2', 'Prélèvement à faire'));
+      var sel = document.createElement('select');
+      var ph = document.createElement('option'); ph.value = ''; ph.textContent = '— Choisir —'; sel.appendChild(ph);
+      it.pre.forEach(function(o){ var op = document.createElement('option'); op.value = String(o.c); op.textContent = o.t; sel.appendChild(op); });
+      if (cur.p !== undefined) sel.value = String(cur.p);
+      sel.addEventListener('change', function(){
+        var a = S.ans[it.k] || {}, x = a[i] || {};
+        if (sel.value === '') delete x.p; else x.p = Number(sel.value);
+        a[i] = x; S.ans[it.k] = a; updateNav();
+      });
+      card.appendChild(sel);
+      card.appendChild(el('div', 'lbl2', 'Contenant à utiliser'));
+      var tubes = el('div', 'tubes');
+      it.tubes.forEach(function(tb){
+        var b = document.createElement('button'); b.type = 'button';
+        b.className = 'tube' + (cur.t === tb.c ? ' sel' : '');
+        b.setAttribute('aria-pressed', cur.t === tb.c ? 'true' : 'false');
+        b.appendChild(svgTube(tb.id)); b.appendChild(el('span', 'tcap', tb.t));
+        b.addEventListener('click', function(){
+          var a = S.ans[it.k] || {}, x = a[i] || {};
+          x.t = tb.c; a[i] = x; S.ans[it.k] = a; render();
+        });
+        tubes.appendChild(b);
+      });
+      card.appendChild(tubes); box.appendChild(card);
+    });
+  }
+
   function render(){
     var it = S.items[S.cur], n = S.items.length;
     $('qCount').textContent = 'Question ' + (S.cur+1) + ' / ' + n;
@@ -425,6 +554,9 @@ var API = {
     } else if (it.type === 'dates'){
       note.textContent = 'Choisissez les trois dates. Le point n’est accordé que si les trois sont justes (tout ou rien).';
       note.hidden = false;
+    } else if (it.type === 'match'){
+      note.textContent = 'Pour chaque maladie, choisissez le prélèvement puis le contenant. Le point n’est accordé que si tout est juste (tout ou rien).';
+      note.hidden = false;
     } else if (it.rptDisease){
       note.textContent = 'Astuce : sur téléphone, tournez l’écran en mode paysage pour mieux lire les figures.';
       note.hidden = false;
@@ -432,7 +564,10 @@ var API = {
     msg('quizErr','');
 
     var box = $('opts'); box.innerHTML = '';
-    if (it.type === 'dates'){
+    box.className = (it.options && it.options[0] && it.options[0].chart) ? 'optgrid' : '';
+    if (it.type === 'match'){
+      renderMatch(it, box);
+    } else if (it.type === 'dates'){
       it.dates.forEach(function(f){
         var w = el('div', 'dfield'); w.appendChild(el('label', 'lbl', f.label));
         var sel = document.createElement('select');
@@ -454,7 +589,7 @@ var API = {
         b.className = 'opt' + (multi ? ' multi' : '') + (chosen ? ' sel' : '');
         b.setAttribute('aria-pressed', chosen ? 'true' : 'false');
         b.appendChild(el('span', 'ltr', multi ? (chosen ? '✓' : '') : String.fromCharCode(65+i)));
-        var body = el('span', 'optbody'); fillContent(body, o, it.rptDisease); b.appendChild(body);
+        var body = el('span', 'optbody'); fillContent(body, o, it); b.appendChild(body);
         b.addEventListener('click', function(){
           if (multi){
             var a = (S.ans[it.k] || []).slice(), p = a.indexOf(o.c);
@@ -516,8 +651,9 @@ var API = {
       .submitTest({ id:S.id, stamp:S.stamp, answers:S.ans, duration: Math.round((Date.now()-S.t0)/1000) });
   }
 
-  function fillList(box, list, disease){
-    list.forEach(function(o){ var d = el('div', 'line'); fillContent(d, o, disease); box.appendChild(d); });
+  function fillList(box, list, x){
+    var ctx = { chartData: x.chartData, rptDisease: x.rptDisease, showCaption: true };
+    list.forEach(function(o){ var d = el('div', 'line'); fillContent(d, o, ctx); box.appendChild(d); });
   }
 
   function renderResult(r){
@@ -548,11 +684,11 @@ var API = {
       if (x.ctx || x.ctxTable){ var cb = el('div', ''); buildCtx(cb, x); d.appendChild(cb); }
       var a = el('div', 'ans ' + (x.ok ? 'ok' : 'ko'));
       a.appendChild(el('b', '', x.ok ? 'Votre réponse · correcte' : 'Votre réponse · incorrecte'));
-      fillList(a, x.chosen, x.rptDisease); d.appendChild(a);
+      fillList(a, x.chosen, x); d.appendChild(a);
       if (!x.ok){
         var c = el('div', 'ans ok');
         c.appendChild(el('b', '', 'Bonne réponse'));
-        fillList(c, x.correct, x.rptDisease); d.appendChild(c);
+        fillList(c, x.correct, x); d.appendChild(c);
       }
       d.appendChild(el('div', 'expl', x.e));
       box.appendChild(d);

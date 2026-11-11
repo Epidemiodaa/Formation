@@ -197,13 +197,13 @@ const QUESTIONS = [
   {
     type: 'dates',
     q: 'Choisissez les bonnes dates pour remplir le bloc « Histoire de la maladie » de la fiche IDS.',
-    ctx: 'Un enfant de 3 ans, né le 12/05/2023, présente de la fièvre et une éruption cutanée à partir du 02/11/2026. Ses parents le conduisent au centre de santé le 04/11/2026 : l’infirmier suspecte une rougeole et notifie le cas le même jour. Le prélèvement est envoyé au laboratoire le 05/11/2026 et la fiche est reçue par la zone sanitaire le 06/11/2026.',
+    ctx: 'Un enfant de 3 ans, né le 12/05/2023, présente de la fièvre et une éruption cutanée à partir du 02/11/2026. Ses parents le conduisent au centre de santé le 04/11/2026, où l’infirmier suspecte une rougeole. Le 05/11/2026, la formation sanitaire envoie la fiche de notification à la zone sanitaire. Le prélèvement est envoyé au laboratoire le 06/11/2026.',
     dates: [
       { k: 'debut', label: 'Date de début des symptômes', o: ['12/05/2023', '02/11/2026', '04/11/2026', '05/11/2026', '06/11/2026'], a: 1 },
       { k: 'consult', label: 'Date de consultation', o: ['12/05/2023', '02/11/2026', '04/11/2026', '05/11/2026', '06/11/2026'], a: 2 },
-      { k: 'notif', label: 'Date de notification', o: ['12/05/2023', '02/11/2026', '04/11/2026', '05/11/2026', '06/11/2026'], a: 2 }
+      { k: 'notif', label: 'Date de notification', o: ['12/05/2023', '02/11/2026', '04/11/2026', '05/11/2026', '06/11/2026'], a: 3 }
     ],
-    e: 'Début des symptômes : 02/11/2026. Consultation : 04/11/2026. Notification : 04/11/2026, le jour de la consultation, car on notifie dès qu’on suspecte le cas. Le 12/05/2023 est la date de naissance, le 05/11/2026 la date d’envoi du prélèvement et le 06/11/2026 la date de réception de la fiche par la zone sanitaire. Les dates doivent se suivre : début, consultation, notification.'
+    e: 'Début des symptômes : 02/11/2026. Consultation : 04/11/2026. Notification : 05/11/2026, c’est la date à laquelle la formation sanitaire envoie la fiche de notification à la zone sanitaire. Le 12/05/2023 est la date de naissance et le 06/11/2026 la date d’envoi du prélèvement au laboratoire. Les dates doivent se suivre : début, consultation, notification.'
   },
   {
     type: 'multi',

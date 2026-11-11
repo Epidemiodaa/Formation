@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test de connaissances · Surveillance épidémiologique ZS DAA</title>
+<style>
+  :root{
+    --ink:#16302f; --mut:#5d7472; --teal:#0f6b6b; --teal-d:#0b4f4f; --teal-l:#e3f1ef;
+    --bg:#f3f7f6; --card:#ffffff; --line:#d5e2e0; --ok:#1b7f4b; --ok-l:#e4f4ea; --ko:#b3261e; --ko-l:#fbe9e7;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.5}
+  .wrap{max-width:720px;margin:0 auto;padding:0 16px}
+  body.adm .wrap{max-width:980px}
+  header.top{background:var(--teal-d);color:#fff;padding:14px 0 16px}
+  header.top .org{font-size:12px;opacity:.85;letter-spacing:.02em}
+  header.top h1{margin:2px 0 0;font-size:20px}
+  main{padding:18px 0 20px}
+  footer{padding:0 0 36px;text-align:center;font-size:13px}
+  footer a{color:var(--mut);cursor:pointer;text-decoration:underline}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+  h2{margin:0 0 10px;font-size:18px}
+  h3{margin:18px 0 8px;font-size:16px}
+  label.lbl{display:block;font-weight:600;margin:12px 0 6px}
+  input[type=text],input[type=password]{width:100%;font-size:18px;padding:12px;border:2px solid var(--line);border-radius:10px;letter-spacing:.02em}
+  #idInput{text-transform:uppercase;letter-spacing:.04em}
+  input[type=text]:focus,input[type=password]:focus{outline:none;border-color:var(--teal)}
+  .hint{font-size:13px;color:var(--mut);margin-top:6px}
+  .phases{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px}
+  .phase{position:relative}
+  .phase input{position:absolute;opacity:0}
+  .phase span{display:block;border:2px solid var(--line);border-radius:10px;padding:12px;text-align:center;font-weight:600;cursor:pointer}
+  .phase input:checked + span{border-color:var(--teal);background:var(--teal-l)}
+  .phase input:focus-visible + span{outline:3px solid #7cc4bf}
+  .switch{display:flex;gap:10px;align-items:center;margin-top:14px;font-weight:600}
+  .switch input{width:20px;height:20px}
+  ul.rules{margin:8px 0 0;padding-left:20px;font-size:14px}
+  ul.rules li{margin:3px 0}
+  button{font:inherit;cursor:pointer}
+  .btn{background:var(--teal);color:#fff;border:0;border-radius:10px;padding:13px 20px;font-weight:600;font-size:16px}
+  .btn:hover{background:var(--teal-d)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.ghost{background:#fff;color:var(--teal-d);border:2px solid var(--line)}
+  .btn.ghost:hover{background:var(--teal-l)}
+  .btn.block{width:100%;margin-top:16px}
+  .btn.sm{padding:9px 14px;font-size:14px}
+  .err{background:var(--ko-l);color:var(--ko);border-radius:10px;padding:10px 12px;margin-top:12px;font-size:14px}
+  .okmsg{background:var(--ok-l);color:#14532d;border-radius:10px;padding:10px 12px;margin-top:12px;font-size:14px}
+  .banner{background:var(--teal-l);border-radius:12px;padding:12px 14px;margin-bottom:6px}
+  .banner small{display:block;color:var(--mut);font-size:12px}
+  .banner b{font-size:19px}
+  .qhead{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;color:var(--mut);margin-bottom:6px}
+  .tag{background:var(--teal-l);color:var(--teal-d);border-radius:999px;padding:3px 10px;font-weight:600;font-size:12px;white-space:nowrap}
+  .prog{height:6px;background:var(--line);border-radius:99px;overflow:hidden;margin-bottom:14px}
+  .prog > div{height:100%;background:var(--teal);width:0;transition:width .2s}
+  .qtext{font-size:18px;font-weight:600;margin:0 0 14px}
+  .opt{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;background:#fff;border:2px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px;color:var(--ink)}
+  .opt:hover{border-color:#9ccbc6}
+  .opt.sel{border-color:var(--teal);background:var(--teal-l)}
+  .ltr{flex:0 0 28px;height:28px;border-radius:50%;background:var(--line);display:grid;place-items:center;font-weight:700;font-size:14px}
+  .opt.sel .ltr{background:var(--teal);color:#fff}
+  .nav{display:flex;justify-content:space-between;gap:10px;margin-top:6px}
+  .nav .btn{flex:1}
+  .grid{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;margin-top:16px}
+  .grid button{border:2px solid var(--line);background:#fff;border-radius:8px;padding:6px 0;font-size:13px;color:var(--mut)}
+  .grid button.done{background:var(--teal-l);border-color:#9ccbc6;color:var(--teal-d);font-weight:600}
+  .grid button.cur{border-color:var(--teal);box-shadow:0 0 0 2px var(--teal) inset}
+  .score{text-align:center}
+  .score .big{font-size:48px;font-weight:800;color:var(--teal-d);line-height:1.1}
+  .score .sub{color:var(--mut)}
+  .meter{height:10px;background:var(--line);border-radius:99px;overflow:hidden;margin:12px 0}
+  .meter > div{height:100%;background:var(--teal)}
+  .idbox{background:var(--teal-l);border-radius:10px;padding:10px 12px;margin-top:12px;font-size:14px}
+  .item{border-left:6px solid var(--line)}
+  .item.ok{border-left-color:var(--ok)}
+  .item.ko{border-left-color:var(--ko)}
+  .item .meta{font-size:12px;color:var(--mut);margin-bottom:4px}
+  .item .q{font-weight:600;margin-bottom:8px}
+  .ans{border-radius:8px;padding:8px 10px;margin:6px 0;font-size:14px}
+  .ans.ok{background:var(--ok-l);color:#14532d}
+  .ans.ko{background:var(--ko-l);color:#7f1d1d}
+  .ans b{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.04em;opacity:.8}
+  .expl{font-size:14px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
+  .ctx{margin:0 0 10px;font-size:15px;background:#f7faf9;border-left:4px solid var(--teal);padding:8px 10px;border-radius:6px}
+  .ctxtitle{font-weight:600;font-size:14px;margin:6px 0 4px}
+  table.ctxt{font-size:14px;margin-bottom:12px}
+  .note{background:#fff7e0;border:1px solid #f0dc9c;color:#5b4a00;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:10px}
+  .opt.multi .ltr{border-radius:6px;background:#fff;border:2px solid #9ab5b1}
+  .opt.multi.sel .ltr{background:var(--teal);border-color:var(--teal);color:#fff}
+  .optbody{flex:1;min-width:0}
+  svg.rpt{display:block;width:100%;height:auto}
+  .dfield{margin-bottom:12px}
+  .dfield select{width:100%;font-size:17px;padding:11px;border:2px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
+  .line{margin:4px 0}
+  /* admin */
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .tablewrap{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{border:1px solid var(--line);padding:7px 9px;text-align:center}
+  th{background:var(--teal-l);color:var(--teal-d)}
+  td.l, th.l{text-align:left}
+  tr.gain td{background:#f7faf9;font-style:italic;color:var(--mut)}
+  details{margin:8px 0}
+  summary{cursor:pointer;font-weight:600}
+  canvas{width:100%;height:auto;border:1px solid var(--line);border-radius:10px;background:#fff}
+  .toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}
+  .status{display:inline-block;border-radius:99px;padding:3px 12px;font-size:13px;font-weight:700}
+  .status.open{background:var(--ok-l);color:#14532d}
+  .status.closed{background:var(--ko-l);color:var(--ko)}
+  @media (max-width:640px){ .row2{grid-template-columns:1fr} .grid{grid-template-columns:repeat(7,1fr)} }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <div class="org">Centre de Surveillance Épidémiologique · ZS Djidja-Abomey-Agbangnizoun</div>
+  <h1 id="pageTitle">Test de connaissances · Surveillance épidémiologique</h1>
+</div></header>
+
+<main class="wrap">
+
+  <!-- ACCUEIL PARTICIPANT -->
+  <section id="s-start" class="card">
+    <div id="loadingMsg" class="hint">Chargement…</div>
+
+    <div id="closedMsg" hidden>
+      <h2>Aucune activité ouverte</h2>
+      <p>Le test n’est pas ouvert pour le moment. Attendez les instructions de l’animateur, puis rechargez la page.</p>
+      <button id="btnReload" class="btn ghost sm" type="button">Actualiser</button>
+    </div>
+
+    <div id="startForm" hidden>
+      <div class="banner"><small>Activité</small><b id="actTitle"></b></div>
+      <label class="lbl" for="idInput">Votre identifiant unique</label>
+      <input id="idInput" type="text" maxlength="30" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ex. DAA-014">
+      <div class="hint">Gardez le même identifiant à chaque test de la formation. 2 à 30 caractères : lettres, avec ou sans chiffres (tiret accepté).</div>
+      <ul class="rules">
+        <li>20 questions. Pour certaines, <b>plusieurs réponses sont possibles</b> : le point n’est accordé que si toutes les bonnes réponses, et seulement elles, sont cochées (tout ou rien).</li>
+        <li>Répondez <b>seul</b>, sans document et sans téléphone.</li>
+        <li>L’ordre des questions est différent d’une personne à l’autre.</li>
+        <li>Le test sert à mesurer vos progrès, pas à vous sanctionner.</li>
+        <li>Après l’envoi de vos réponses, le <b>corrigé</b> s’affiche. Une fois envoyé, le test ne peut plus être modifié.</li>
+      </ul>
+      <div id="startErr" class="err" hidden></div>
+      <button id="btnStart" class="btn block" type="button">Commencer le test</button>
+    </div>
+  </section>
+
+  <!-- QUESTIONS -->
+  <section id="s-quiz" hidden>
+    <div class="card">
+      <div class="qhead"><span id="qCount"></span></div>
+      <div class="prog"><div id="bar"></div></div>
+      <p id="qText" class="qtext"></p>
+      <div id="qCtx"></div>
+      <div id="qNote" class="note" hidden></div>
+      <div id="opts"></div>
+      <div id="quizErr" class="err" hidden></div>
+      <div class="nav">
+        <button id="btnPrev" class="btn ghost" type="button">← Précédent</button>
+        <button id="btnNext" class="btn" type="button">Suivant →</button>
+        <button id="btnSubmit" class="btn" type="button" hidden>Envoyer mes réponses</button>
+      </div>
+      <div id="grid" class="grid" aria-label="Navigation entre les questions"></div>
+      <div class="hint" id="answeredInfo"></div>
+    </div>
+  </section>
+
+  <!-- RÉSULTAT -->
+  <section id="s-result" hidden>
+    <div class="card score">
+      <div class="sub" id="resPhase"></div>
+      <div class="big" id="resScore"></div>
+      <div class="sub" id="resPct"></div>
+      <div class="meter"><div id="resMeter" style="width:0"></div></div>
+      <p id="resMsg"></p>
+      <div class="idbox" id="resId"></div>
+    </div>
+    <h2 style="margin:18px 4px 10px">Corrigé</h2>
+    <div id="review"></div>
+    <button id="btnDone" class="btn block" type="button">Terminer et revenir à l’accueil</button>
+  </section>
+
+  <!-- CONNEXION ADMIN -->
+  <section id="s-login" class="card" hidden>
+    <h2>Espace administrateur</h2>
+    <label class="lbl" for="pwInput">Mot de passe</label>
+    <input id="pwInput" type="password" autocomplete="off">
+    <div id="loginErr" class="err" hidden></div>
+    <button id="btnLogin" class="btn block" type="button">Se connecter</button>
+    <button id="btnLoginBack" class="btn ghost block" type="button">Retour</button>
+  </section>
+
+  <!-- ESPACE ADMIN -->
+  <section id="s-admin" hidden>
+    <div class="card">
+      <h2>Activité en cours <span id="admStatus" class="status closed">Fermée</span></h2>
+      <label class="lbl" for="cfgTitle">Titre de l’activité (affiché à tous les participants)</label>
+      <input id="cfgTitle" type="text" maxlength="100" placeholder="ex. Pré-test · Formation des chefs de poste · Vague 2">
+      <div class="row2">
+        <div>
+          <label class="lbl" for="cfgSession">Session / classe</label>
+          <input id="cfgSession" type="text" maxlength="60" placeholder="ex. Vague 2 – Chefs de poste">
+          <div class="hint">Utilisez exactement le même nom pour le pré-test et le post-test d’une même classe : c’est ce qui permet de les comparer. Au post-test, seuls les identifiants déjà enregistrés au pré-test de cette session sont acceptés.</div>
+        </div>
+        <div>
+          <label class="lbl">Test à activer</label>
+          <div class="phases">
+            <label class="phase"><input type="radio" name="cfgPhase" value="Pré-test" checked><span>Pré-test</span></label>
+            <label class="phase"><input type="radio" name="cfgPhase" value="Post-test"><span>Post-test</span></label>
+          </div>
+        </div>
+      </div>
+      <label class="switch"><input id="cfgOpen" type="checkbox"> Formulaire ouvert aux participants</label>
+      <div class="hint">Évitez de changer le titre, la session ou le test pendant que des participants répondent : leurs réponses ne seraient pas enregistrées.</div>
+      <div id="cfgMsg" hidden></div>
+      <div class="toolbar">
+        <button id="btnSaveCfg" class="btn" type="button">Enregistrer</button>
+        <button id="btnLogout" class="btn ghost" type="button">Quitter l’espace admin</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Statistiques <button id="btnRefresh" class="btn ghost sm" type="button" style="margin-left:8px">Actualiser</button></h2>
+      <div id="statsEmpty" class="hint" hidden>Aucun résultat enregistré pour le moment.</div>
+      <div id="statsBox" hidden>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th class="l">Session / classe</th><th>Test</th><th>Effectif</th><th>Note min.</th><th>Note max.</th><th>Moyenne</th><th>Moyenne %</th></tr></thead>
+            <tbody id="statsBody"></tbody>
+          </table>
+        </div>
+        <div class="hint" id="statsNote"></div>
+
+        <h3>Graphique de comparaison pré-test / post-test</h3>
+        <canvas id="chart" width="1200" height="720"></canvas>
+        <div class="toolbar">
+          <button id="btnExport" class="btn" type="button">Exporter le graphique (PNG)</button>
+        </div>
+        <div id="chartImgBox" hidden>
+          <div class="hint">Si le téléchargement ne démarre pas, faites un appui long (ou clic droit) sur l’image, puis « Enregistrer l’image ».</div>
+          <img id="chartImg" alt="Graphique de comparaison exporté" style="width:100%;border:1px solid var(--line);border-radius:10px;margin-top:8px">
+        </div>
+
+        <h3>Résultats individuels</h3>
+        <div id="people"></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+<footer class="wrap"><a id="lnkAdmin">Espace administrateur</a></footer>
+
+<script>
+// >>> Adresse de l'API Apps Script (URL /exec du déploiement) <<<
+var API_URL = 'https://script.google.com/macros/s/AKfycbzmylSAU7ocsFHMVDGNaO2jladI_obqWVw8m-4pkVr4R1gVxmZU8kRQjwqSfczdIVEE/exec';
+
+var API = {
+  run: function(){
+    var ok = function(){}, ko = function(){};
+    var o = {
+      withSuccessHandler: function(f){ ok = f; return o; },
+      withFailureHandler: function(f){ ko = f; return o; }
+    };
+    ['getPublicConfig','startTest','submitTest','adminLogin','adminSaveConfig','adminStats'].forEach(function(name){
+      o[name] = function(){
+        var args = Array.prototype.slice.call(arguments);
+        // Requête « simple » (text/plain) : acceptée par Apps Script depuis un autre domaine, sans pré-vérification CORS
+        fetch(API_URL, { method:'POST', body: JSON.stringify({ action:name, args:args }) })
+          .then(function(r){ return r.json(); })
+          .then(function(d){ ok(d); }, function(){ ko(); });
+      };
+    });
+    return o;
+  }
+};
+</script>
+<script>
+(function(){
+  var S = { id:'', stamp:'', title:'', items:[], ans:{}, cur:0, t0:0, active:false, sending:false };
+  var PW = '';
+  var SCREENS = ['s-start','s-quiz','s-result','s-login','s-admin'];
+  function $(id){ return document.getElementById(id); }
+  function show(id){
+    SCREENS.forEach(function(x){ $(x).hidden = (x !== id); });
+    document.body.classList.toggle('adm', id === 's-admin');
+    $('lnkAdmin').parentNode.hidden = (id === 's-quiz');
+    window.scrollTo(0,0);
+  }
+  function msg(boxId, text, cls){ var b=$(boxId); b.textContent = text || ''; b.hidden = !text; if(cls){ b.className = cls; } }
+  function el(tag, cls, text){ var e=document.createElement(tag); if(cls) e.className=cls; if(text!==undefined) e.textContent=text; return e; }
+
+  window.onbeforeunload = function(){ return S.active ? 'Vos réponses seront perdues.' : undefined; };
+
+  /* =============== PARTICIPANT =============== */
+  function loadConfig(){
+    $('loadingMsg').hidden = false; $('closedMsg').hidden = true; $('startForm').hidden = true;
+    API.run()
+      .withSuccessHandler(function(c){
+        $('loadingMsg').hidden = true;
+        if (c && c.open){
+          $('pageTitle').textContent = c.title;
+          $('actTitle').textContent = c.title;
+          $('startForm').hidden = false;
+        } else {
+          $('pageTitle').textContent = 'Test de connaissances · Surveillance épidémiologique';
+          $('closedMsg').hidden = false;
+        }
+      })
+      .withFailureHandler(function(){
+        $('loadingMsg').textContent = 'Connexion impossible. Vérifiez le réseau puis actualisez la page.';
+      })
+      .getPublicConfig();
+  }
+  $('btnReload').addEventListener('click', loadConfig);
+  $('idInput').addEventListener('input', function(){
+    var pos = this.selectionStart;
+    this.value = this.value.toUpperCase();
+    try { this.setSelectionRange(pos, pos); } catch (e) {}
+  });
+  $('idInput').addEventListener('keydown', function(e){ if(e.key==='Enter'){ start(); } });
+  $('btnStart').addEventListener('click', start);
+
+  function start(){
+    if (S.sending) return;
+    msg('startErr','');
+    S.sending = true;
+    $('btnStart').disabled = true; $('btnStart').textContent = 'Chargement…';
+    API.run()
+      .withSuccessHandler(function(r){
+        S.sending = false; $('btnStart').disabled = false; $('btnStart').textContent = 'Commencer le test';
+        if(!r || !r.ok){ msg('startErr', (r && r.message) || 'Erreur inconnue.'); return; }
+        S.id = r.id; S.stamp = r.stamp; S.title = r.title; S.items = r.items; S.ans = {}; S.cur = 0;
+        S.t0 = Date.now(); S.active = true;
+        show('s-quiz'); render();
+      })
+      .withFailureHandler(function(){
+        S.sending = false; $('btnStart').disabled = false; $('btnStart').textContent = 'Commencer le test';
+        msg('startErr', 'Connexion impossible. Vérifiez le réseau puis réessayez.');
+      })
+      .startTest($('idInput').value);
+  }
+
+  /* ---------- Types de questions : unique, multiple (tout ou rien), dates, figure de rapport ---------- */
+  function isAnswered(it){
+    var a = S.ans[it.k];
+    if (it.type === 'multi') return Array.isArray(a) && a.length > 0;
+    if (it.type === 'dates') return !!a && it.dates.every(function(f){ return a[f.k] !== undefined; });
+    return a !== undefined;
+  }
+  function answeredCount(){ return S.items.filter(isAnswered).length; }
+
+  var NS = 'http://www.w3.org/2000/svg';
+  // Dessin d'une ligne du rapport hebdomadaire : Suspect / Décès / Confirmé, < 5 ans et ≥ 5 ans, M et F, Total
+  function svgReport(rpt, disease){
+    var W = 774, H = 140, L = 84, cw = 46;
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('class', 'rpt'); svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Ligne ' + disease + ' du rapport hebdomadaire');
+    function rect(x, y, w, h, fill){
+      var r = document.createElementNS(NS, 'rect');
+      r.setAttribute('x', x); r.setAttribute('y', y); r.setAttribute('width', w); r.setAttribute('height', h);
+      r.setAttribute('fill', fill); r.setAttribute('stroke', '#8fb3ae'); r.setAttribute('stroke-width', '1.5');
+      svg.appendChild(r);
+    }
+    function txt(s, x, y, size, bold){
+      var t = document.createElementNS(NS, 'text');
+      t.setAttribute('x', x); t.setAttribute('y', y); t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('font-size', size); t.setAttribute('font-family', 'Arial, sans-serif');
+      t.setAttribute('font-weight', bold ? '700' : '400'); t.setAttribute('fill', '#16302f');
+      t.textContent = s; svg.appendChild(t);
+    }
+    rect(0, 0, L, 92, '#e3f1ef');
+    txt('Maladie /', L/2, 38, 15, true); txt('événement', L/2, 58, 15, true);
+    rect(0, 92, L, 48, '#ffffff'); txt(disease || '', L/2, 124, 16, true);
+    var groups = ['Suspect', 'Décès', 'Confirmé'], sexes = ['M', 'F', 'M', 'F', 'Total'];
+    for (var g = 0; g < 3; g++){
+      var x = L + g * 5 * cw;
+      rect(x, 0, 5 * cw, 32, '#d2e8e5'); txt(groups[g], x + 2.5 * cw, 24, 22, true);
+      rect(x, 32, 2 * cw, 30, '#eef6f5'); txt('< 5 ans', x + cw, 54, 17, false);
+      rect(x + 2 * cw, 32, 2 * cw, 30, '#eef6f5'); txt('≥ 5 ans', x + 3 * cw, 54, 17, false);
+      rect(x + 4 * cw, 32, cw, 30, '#eef6f5');
+      for (var k = 0; k < 5; k++){
+        rect(x + k * cw, 62, cw, 30, '#eef6f5'); txt(sexes[k], x + k * cw + cw/2, 83, k === 4 ? 14 : 17, k === 4);
+        rect(x + k * cw, 92, cw, 48, k === 4 ? '#f3f8f7' : '#ffffff');
+        txt(String(rpt[g][k]), x + k * cw + cw/2, 127, 34, k === 4);
+      }
+    }
+    return svg;
+  }
+  function fillContent(node, opt, disease){
+    if (opt.rpt) node.appendChild(svgReport(opt.rpt, disease));
+    else node.appendChild(document.createTextNode(opt.t));
+  }
+  function buildCtx(box, it){
+    box.innerHTML = '';
+    if (it.ctx) box.appendChild(el('p', 'ctx', it.ctx));
+    if (it.ctxTable){
+      var w = el('div', 'tablewrap'), t = document.createElement('table'); t.className = 'ctxt';
+      var th = document.createElement('thead'), hr = document.createElement('tr');
+      it.ctxTable.head.forEach(function(x){ hr.appendChild(el('th', '', x)); });
+      th.appendChild(hr); t.appendChild(th);
+      var tb = document.createElement('tbody');
+      it.ctxTable.rows.forEach(function(r){
+        var tr = document.createElement('tr');
+        r.forEach(function(c){ tr.appendChild(el('td', '', String(c))); });
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb); w.appendChild(t); box.appendChild(w);
+    }
+  }
+
+  function render(){
+    var it = S.items[S.cur], n = S.items.length;
+    $('qCount').textContent = 'Question ' + (S.cur+1) + ' / ' + n;
+    $('bar').style.width = ((S.cur+1)/n*100) + '%';
+    $('qText').textContent = it.q;
+    buildCtx($('qCtx'), it);
+    var note = $('qNote');
+    if (it.type === 'multi'){
+      note.textContent = 'Plusieurs réponses possibles : cochez toutes les bonnes réponses. Le point n’est accordé que si toutes les bonnes réponses sont cochées, et seulement elles (tout ou rien).';
+      note.hidden = false;
+    } else if (it.type === 'dates'){
+      note.textContent = 'Choisissez les trois dates. Le point n’est accordé que si les trois sont justes (tout ou rien).';
+      note.hidden = false;
+    } else if (it.rptDisease){
+      note.textContent = 'Astuce : sur téléphone, tournez l’écran en mode paysage pour mieux lire les figures.';
+      note.hidden = false;
+    } else { note.hidden = true; }
+    msg('quizErr','');
+
+    var box = $('opts'); box.innerHTML = '';
+    if (it.type === 'dates'){
+      it.dates.forEach(function(f){
+        var w = el('div', 'dfield'); w.appendChild(el('label', 'lbl', f.label));
+        var sel = document.createElement('select');
+        var ph = document.createElement('option'); ph.value = ''; ph.textContent = '— Choisir une date —'; sel.appendChild(ph);
+        f.options.forEach(function(o){ var op = document.createElement('option'); op.value = String(o.c); op.textContent = o.t; sel.appendChild(op); });
+        var cur = (S.ans[it.k] || {})[f.k]; if (cur !== undefined) sel.value = String(cur);
+        sel.addEventListener('change', function(){
+          var a = S.ans[it.k] || {};
+          if (sel.value === '') { delete a[f.k]; } else { a[f.k] = Number(sel.value); }
+          S.ans[it.k] = a; updateNav();
+        });
+        w.appendChild(sel); box.appendChild(w);
+      });
+    } else {
+      var multi = (it.type === 'multi');
+      it.options.forEach(function(o, i){
+        var chosen = multi ? (S.ans[it.k] || []).indexOf(o.c) >= 0 : S.ans[it.k] === o.c;
+        var b = document.createElement('button'); b.type = 'button';
+        b.className = 'opt' + (multi ? ' multi' : '') + (chosen ? ' sel' : '');
+        b.setAttribute('aria-pressed', chosen ? 'true' : 'false');
+        b.appendChild(el('span', 'ltr', multi ? (chosen ? '✓' : '') : String.fromCharCode(65+i)));
+        var body = el('span', 'optbody'); fillContent(body, o, it.rptDisease); b.appendChild(body);
+        b.addEventListener('click', function(){
+          if (multi){
+            var a = (S.ans[it.k] || []).slice(), p = a.indexOf(o.c);
+            if (p >= 0) a.splice(p, 1); else a.push(o.c);
+            if (a.length) S.ans[it.k] = a; else delete S.ans[it.k];
+          } else { S.ans[it.k] = o.c; }
+          render();
+        });
+        box.appendChild(b);
+      });
+    }
+
+    $('btnPrev').disabled = (S.cur === 0);
+    var last = (S.cur === n-1);
+    $('btnNext').hidden = last;
+    $('btnSubmit').hidden = !last;
+    updateNav();
+  }
+
+  function updateNav(){
+    var g = $('grid'); g.innerHTML = '';
+    S.items.forEach(function(x, i){
+      var b = el('button', '', String(i+1)); b.type = 'button';
+      b.className = (isAnswered(x) ? 'done' : '') + (i === S.cur ? ' cur' : '');
+      b.setAttribute('aria-label', 'Question ' + (i+1));
+      b.addEventListener('click', function(){ S.cur = i; render(); });
+      g.appendChild(b);
+    });
+    $('answeredInfo').textContent = answeredCount() + ' / ' + S.items.length + ' questions répondues';
+  }
+
+  $('btnPrev').addEventListener('click', function(){ if(S.cur>0){ S.cur--; render(); } });
+  $('btnNext').addEventListener('click', function(){ if(S.cur<S.items.length-1){ S.cur++; render(); } });
+  $('btnSubmit').addEventListener('click', submit);
+
+  function submit(){
+    if (S.sending) return;
+    var miss = -1;
+    for (var i=0;i<S.items.length;i++){ if (!isAnswered(S.items[i])){ miss = i; break; } }
+    if (miss >= 0){
+      S.cur = miss; render();
+      msg('quizErr', 'Il reste des questions sans réponse. Répondez à la question n° ' + (miss+1) + ' (les cases numérotées du bas mènent aux autres).');
+      return;
+    }
+    S.sending = true;
+    $('btnSubmit').disabled = true; $('btnSubmit').textContent = 'Envoi en cours…';
+    msg('quizErr','');
+    API.run()
+      .withSuccessHandler(function(r){
+        S.sending = false; $('btnSubmit').disabled = false; $('btnSubmit').textContent = 'Envoyer mes réponses';
+        if(!r || !r.ok){ msg('quizErr', (r && r.message) || 'Erreur inconnue.'); return; }
+        S.active = false;
+        renderResult(r);
+      })
+      .withFailureHandler(function(){
+        S.sending = false; $('btnSubmit').disabled = false; $('btnSubmit').textContent = 'Envoyer mes réponses';
+        msg('quizErr', 'Envoi impossible : vos réponses sont conservées. Vérifiez le réseau puis cliquez de nouveau sur « Envoyer ».');
+      })
+      .submitTest({ id:S.id, stamp:S.stamp, answers:S.ans, duration: Math.round((Date.now()-S.t0)/1000) });
+  }
+
+  function fillList(box, list, disease){
+    list.forEach(function(o){ var d = el('div', 'line'); fillContent(d, o, disease); box.appendChild(d); });
+  }
+
+  function renderResult(r){
+    $('resPhase').textContent = r.title + ' · identifiant ' + r.id;
+    $('resScore').textContent = r.score + ' / ' + r.total;
+    $('resPct').textContent = r.pct + ' % de bonnes réponses';
+    $('resMeter').style.width = r.pct + '%';
+    var m;
+    if (r.phase === 'Pré-test') {
+      m = 'Ce résultat est votre point de départ : il sert à mesurer vos progrès après la formation.';
+    } else if (r.pct >= 80) {
+      m = 'Très bon résultat. Relisez tout de même le corrigé pour les points restants.';
+    } else if (r.pct >= 60) {
+      m = 'Résultat satisfaisant. Relisez le corrigé pour consolider les points manqués.';
+    } else {
+      m = 'Des points restent à revoir : relisez le corrigé ci-dessous avec attention.';
+    }
+    $('resMsg').textContent = m;
+    $('resId').textContent = (r.phase === 'Pré-test')
+      ? 'Conservez votre identifiant ' + r.id + ' : il sera demandé au post-test.'
+      : 'Vos tests sont liés par l’identifiant ' + r.id + '.';
+
+    var box = $('review'); box.innerHTML = '';
+    r.items.forEach(function(x){
+      var d = el('div', 'card item ' + (x.ok ? 'ok' : 'ko'));
+      d.appendChild(el('div', 'meta', 'Question ' + x.n));
+      d.appendChild(el('div', 'q', x.q));
+      if (x.ctx || x.ctxTable){ var cb = el('div', ''); buildCtx(cb, x); d.appendChild(cb); }
+      var a = el('div', 'ans ' + (x.ok ? 'ok' : 'ko'));
+      a.appendChild(el('b', '', x.ok ? 'Votre réponse · correcte' : 'Votre réponse · incorrecte'));
+      fillList(a, x.chosen, x.rptDisease); d.appendChild(a);
+      if (!x.ok){
+        var c = el('div', 'ans ok');
+        c.appendChild(el('b', '', 'Bonne réponse'));
+        fillList(c, x.correct, x.rptDisease); d.appendChild(c);
+      }
+      d.appendChild(el('div', 'expl', x.e));
+      box.appendChild(d);
+    });
+    show('s-result');
+  }
+
+  $('btnDone').addEventListener('click', function(){
+    S = { id:'', stamp:'', title:'', items:[], ans:{}, cur:0, t0:0, active:false, sending:false };
+    $('idInput').value = '';
+    msg('startErr','');
+    show('s-start'); loadConfig();
+  });
+
+  /* =============== ADMINISTRATEUR =============== */
+  $('lnkAdmin').addEventListener('click', function(){ msg('loginErr',''); $('pwInput').value=''; show('s-login'); $('pwInput').focus(); });
+  $('btnLoginBack').addEventListener('click', function(){ show('s-start'); });
+  $('pwInput').addEventListener('keydown', function(e){ if(e.key==='Enter'){ login(); } });
+  $('btnLogin').addEventListener('click', login);
+
+  function login(){
+    var pw = $('pwInput').value;
+    msg('loginErr','');
+    $('btnLogin').disabled = true;
+    API.run()
+      .withSuccessHandler(function(r){
+        $('btnLogin').disabled = false;
+        if(!r || !r.ok){ msg('loginErr', (r && r.message) || 'Erreur inconnue.'); return; }
+        PW = pw;
+        fillConfig(r.config);
+        show('s-admin');
+        loadStats();
+      })
+      .withFailureHandler(function(){ $('btnLogin').disabled = false; msg('loginErr','Connexion impossible.'); })
+      .adminLogin(pw);
+  }
+
+  function fillConfig(c){
+    $('cfgTitle').value = c.title || '';
+    $('cfgSession').value = c.session || '';
+    var radios = document.getElementsByName('cfgPhase');
+    for (var i=0;i<radios.length;i++){ radios[i].checked = (radios[i].value === (c.phase || 'Pré-test')); }
+    $('cfgOpen').checked = !!c.open;
+    setStatus(!!c.open && !!c.title);
+  }
+  function setStatus(open){
+    var s = $('admStatus'); s.textContent = open ? 'Ouverte' : 'Fermée'; s.className = 'status ' + (open ? 'open' : 'closed');
+  }
+
+  $('btnSaveCfg').addEventListener('click', function(){
+    var phase = document.querySelector('input[name=cfgPhase]:checked').value;
+    $('btnSaveCfg').disabled = true; msg('cfgMsg','');
+    API.run()
+      .withSuccessHandler(function(r){
+        $('btnSaveCfg').disabled = false;
+        if(!r || !r.ok){ msg('cfgMsg', (r && r.message) || 'Erreur inconnue.', 'err'); return; }
+        fillConfig(r.config);
+        msg('cfgMsg', r.config.open
+          ? 'Enregistré. Les participants voient : « ' + r.config.title + ' » et passent le ' + r.config.phase + '.'
+          : 'Enregistré. Le formulaire est fermé : les participants ne peuvent pas démarrer.', 'okmsg');
+      })
+      .withFailureHandler(function(){ $('btnSaveCfg').disabled = false; msg('cfgMsg','Connexion impossible.','err'); })
+      .adminSaveConfig(PW, { title:$('cfgTitle').value, session:$('cfgSession').value, phase:phase, open:$('cfgOpen').checked });
+  });
+
+  $('btnLogout').addEventListener('click', function(){ PW=''; show('s-start'); loadConfig(); });
+  $('btnRefresh').addEventListener('click', loadStats);
+
+  var STATS = null;
+  function loadStats(){
+    API.run()
+      .withSuccessHandler(function(r){
+        if(!r || !r.ok){ msg('cfgMsg', (r && r.message) || 'Statistiques indisponibles.', 'err'); return; }
+        STATS = r; renderStats(r);
+      })
+      .withFailureHandler(function(){ msg('cfgMsg','Connexion impossible.','err'); })
+      .adminStats(PW);
+  }
+
+  function tr(cells, cls){
+    var r = document.createElement('tr'); if(cls) r.className = cls;
+    cells.forEach(function(c, i){
+      var td = el('td', c.l ? 'l' : '', c.t);
+      if (c.span) td.colSpan = c.span;
+      r.appendChild(td);
+    });
+    return r;
+  }
+  function fmt(v){ return (v === null || v === undefined) ? '—' : String(v).replace('.', ','); }
+
+  function renderStats(d){
+    var has = d.sessions.length > 0;
+    $('statsEmpty').hidden = has; $('statsBox').hidden = !has;
+    if (!has) return;
+    var total = d.total, body = $('statsBody'); body.innerHTML = '';
+    d.sessions.forEach(function(g){
+      [['Pré-test', g.pre], ['Post-test', g.post]].forEach(function(p, i){
+        var s = p[1];
+        body.appendChild(tr([
+          { t: i === 0 ? g.session : '', l: true }, { t: p[0] },
+          { t: s ? s.n : 0 }, { t: fmt(s && s.min) }, { t: fmt(s && s.max) },
+          { t: s ? fmt(s.mean) + ' / ' + total : '—' }, { t: s ? fmt(Math.round(s.mean * 1000 / total) / 10) + ' %' : '—' }
+        ]));
+      });
+      var gainTxt = g.gainMean === null ? 'pas encore de participant ayant passé les deux tests'
+        : 'gain moyen : ' + (g.gainMean > 0 ? '+' : '') + fmt(g.gainMean) + ' point(s) sur ' + g.pairedN + ' participant(s) ayant passé les deux tests';
+      body.appendChild(tr([{ t: gainTxt, span: 7, l: true }], 'gain'));
+    });
+    $('statsNote').textContent = 'Notes sur ' + total + ' points. Les gains ne portent que sur les identifiants présents au pré-test et au post-test de la même session.';
+
+    drawChart($('chart'), d.sessions, total);
+    $('chartImgBox').hidden = true;
+
+    var pe = $('people'); pe.innerHTML = '';
+    d.sessions.forEach(function(g){
+      var det = document.createElement('details');
+      det.appendChild(el('summary','', g.session + ' (' + g.rows.length + ' participant' + (g.rows.length>1?'s':'') + ')'));
+      var w = el('div','tablewrap'), t = document.createElement('table');
+      var th = document.createElement('thead');
+      var hr = document.createElement('tr');
+      ['Identifiant','Pré-test','Post-test','Gain'].forEach(function(h, i){ hr.appendChild(el('th', i===0?'l':'', h)); });
+      th.appendChild(hr); t.appendChild(th);
+      var tb = document.createElement('tbody');
+      g.rows.forEach(function(r){
+        tb.appendChild(tr([{ t:r.id, l:true }, { t:fmt(r.pre) }, { t:fmt(r.post) }, { t: r.gain===null ? '—' : (r.gain>0?'+':'') + r.gain }]));
+      });
+      t.appendChild(tb); w.appendChild(t); det.appendChild(w); pe.appendChild(det);
+    });
+  }
+
+  /* ---- Graphique (dessiné sur un canvas, exportable en PNG) ---- */
+  function wrapLabel(c, text, maxW){
+    var words = String(text).split(/\s+/), lines = [], cur = '';
+    words.forEach(function(w){
+      var t = cur ? cur + ' ' + w : w;
+      if (c.measureText(t).width > maxW && cur){ lines.push(cur); cur = w; } else { cur = t; }
+    });
+    if (cur) lines.push(cur);
+    if (lines.length > 3){ lines = lines.slice(0,3); lines[2] = lines[2].replace(/.{1,2}$/, '…'); }
+    return lines;
+  }
+
+  function drawChart(cv, sessions, total){
+    var W = 1200, H = 720; cv.width = W; cv.height = H;
+    var c = cv.getContext('2d');
+    c.fillStyle = '#ffffff'; c.fillRect(0,0,W,H);
+    c.textAlign = 'left'; c.fillStyle = '#16302f'; c.font = 'bold 28px Arial, sans-serif';
+    c.fillText('Comparaison des scores : pré-test et post-test', 40, 46);
+    c.font = '18px Arial, sans-serif'; c.fillStyle = '#5d7472';
+    c.fillText('Moyenne (barre) et note minimale à maximale (trait), sur ' + total + ' points', 40, 76);
+
+    var L = 80, R = 40, T = 120, B = 190, pw = W-L-R, ph = H-T-B;
+    function Y(v){ return T + ph - (v/total)*ph; }
+
+    c.font = '16px Arial, sans-serif'; c.textAlign = 'right';
+    for (var v = 0; v <= total; v += 5){
+      var y = Y(v);
+      c.strokeStyle = v === 0 ? '#16302f' : '#d5e2e0'; c.lineWidth = v === 0 ? 2 : 1;
+      c.beginPath(); c.moveTo(L, y); c.lineTo(W-R, y); c.stroke();
+      c.fillStyle = '#5d7472'; c.fillText(String(v), L-10, y+5);
+    }
+
+    var n = sessions.length, gw = pw / n, bw = Math.min(90, gw/3);
+    var PRE = '#6b9ac4', POST = '#0f6b6b';
+    sessions.forEach(function(g, i){
+      var cx = L + gw*i + gw/2;
+      [[g.pre, cx-bw-6, PRE], [g.post, cx+6, POST]].forEach(function(p){
+        var s = p[0]; if(!s) return;
+        var x = p[1], mx = x + bw/2;
+        c.fillStyle = p[2]; c.fillRect(x, Y(s.mean), bw, Y(0)-Y(s.mean));
+        c.strokeStyle = '#16302f'; c.lineWidth = 2; c.beginPath();
+        c.moveTo(mx, Y(s.min)); c.lineTo(mx, Y(s.max));
+        c.moveTo(mx-9, Y(s.min)); c.lineTo(mx+9, Y(s.min));
+        c.moveTo(mx-9, Y(s.max)); c.lineTo(mx+9, Y(s.max));
+        c.stroke();
+        c.fillStyle = '#16302f'; c.font = 'bold 18px Arial, sans-serif'; c.textAlign = 'center';
+        c.fillText(String(s.mean).replace('.', ','), mx, Y(s.max) - 10);
+      });
+      c.fillStyle = '#16302f'; c.font = 'bold 17px Arial, sans-serif'; c.textAlign = 'center';
+      var lines = wrapLabel(c, g.session, Math.max(120, gw - 16)), ly = Y(0) + 30;
+      lines.forEach(function(t, k){ c.fillText(t, cx, ly + k*22); });
+      c.font = '15px Arial, sans-serif'; c.fillStyle = '#5d7472';
+      c.fillText('n = ' + (g.pre ? g.pre.n : 0) + ' / ' + (g.post ? g.post.n : 0), cx, ly + lines.length*22 + 4);
+    });
+
+    // légende
+    c.textAlign = 'left'; c.font = '17px Arial, sans-serif';
+    c.fillStyle = PRE; c.fillRect(L, H-40, 20, 20); c.fillStyle = '#16302f'; c.fillText('Pré-test', L+28, H-24);
+    c.fillStyle = POST; c.fillRect(L+150, H-40, 20, 20); c.fillStyle = '#16302f'; c.fillText('Post-test', L+178, H-24);
+    c.fillStyle = '#5d7472'; c.fillText('n = effectif pré-test / post-test', L+320, H-24);
+  }
+
+  $('btnExport').addEventListener('click', function(){
+    var cv = $('chart'), url = cv.toDataURL('image/png');
+    try {
+      var a = document.createElement('a');
+      a.href = url; a.download = 'comparaison_pre_post_test.png';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    } catch (e) {}
+    $('chartImg').src = url; $('chartImgBox').hidden = false;
+  });
+
+  loadConfig();
+})();
+</script>
+</body>
+</html>

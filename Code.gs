@@ -10,7 +10,7 @@
  *  - Types de questions : choix unique, choix multiple (tout ou rien), trois dates à choisir, figure ou dessin à choisir, maladies à relier aux prélèvements et aux tubes.
  *  - Les bonnes réponses restent sur le serveur ; le corrigé n'est envoyé qu'après la soumission.
  *  - Un identifiant ne peut soumettre qu'une fois par session et par phase.
- *  - Durée limitée à 15 minutes : à l'échéance les réponses partent automatiquement ; toute question non renseignée compte comme fausse.
+ *  - Durée limitée à 25 minutes : à l'échéance les réponses partent automatiquement ; toute question non renseignée compte comme fausse.
  *  - Le post-test n'est accessible qu'avec un identifiant déjà enregistré au pré-test de la MÊME session.
  *  - Résultats écrits dans le Google Sheet (onglets Resultats et Questions) ; statistiques dans l'espace admin.
  *  - Ce script est seulement l'API (pas de page HTML) : la page index.html est hébergée sur GitHub Pages ou un autre serveur.
@@ -21,7 +21,7 @@ const ADMIN_PASSWORD = 'Silo@2000';
 
 const SHEET_ID = '1hZ7v3_5K2qhD5N4YRmt3C96OsxOIk0iuQdQUwYSrwQc';
 const PHASES = ['Pré-test', 'Post-test'];
-const TIME_LIMIT_SEC = 15 * 60; // durée du test : à l'échéance, la page envoie les réponses ; ce qui n'est pas renseigné compte comme faux
+const TIME_LIMIT_SEC = 25 * 60; // durée du test : à l'échéance, la page envoie les réponses ; ce qui n'est pas renseigné compte comme faux
 const COL = { TS: 0, ID: 1, SESSION: 2, PHASE: 3, TITLE: 4, SCORE: 5, PCT: 6, DUR: 7, ORDER: 8 };
 
 /* ------------------------------------------------------------------ */
@@ -345,14 +345,22 @@ function setup() {
 /* ------------------------------------------------------------------ */
 function getConfig_() {
   const raw = PropertiesService.getScriptProperties().getProperty('CONFIG');
-  if (!raw) return { open: false, title: '', session: '', phase: 'Pré-test', stamp: '' };
-  return JSON.parse(raw);
+  const c = raw ? JSON.parse(raw) : { open: false, session: '', phase: 'Pré-test', stamp: '' };
+  // ancienne configuration (un seul titre) : le même titre sert aux deux tests
+  if (c.titlePre === undefined && c.titlePost === undefined) { c.titlePre = c.title || ''; c.titlePost = c.title || ''; }
+  c.titlePre = c.titlePre || '';
+  c.titlePost = c.titlePost || '';
+  c.title = activeTitle_(c);
+  return c;
 }
 
-/** Ce que voient les participants : seulement l'état ouvert/fermé et le titre. */
+/** Titre vu par les participants : celui du test actif. */
+function activeTitle_(c) { return c.phase === 'Post-test' ? (c.titlePost || '') : (c.titlePre || ''); }
+
+/** Ce que voient les participants : état ouvert/fermé, titre du test actif, durée. */
 function getPublicConfig() {
   const c = getConfig_();
-  return { open: !!c.open && !!c.title, title: c.title || '' };
+  return { open: !!c.open && !!c.title, title: c.title || '', limitSec: TIME_LIMIT_SEC };
 }
 
 function checkAdmin_(pw) {
@@ -374,24 +382,30 @@ function adminLogin(pw) {
 function adminSaveConfig(pw, cfg) {
   try {
     checkAdmin_(pw);
-    const title = String((cfg && cfg.title) || '').trim().slice(0, 100);
+    const clean = function (v) { return String(v == null ? '' : v).trim().slice(0, 100); };
+    let titlePre = clean(cfg && cfg.titlePre);
+    let titlePost = clean(cfg && cfg.titlePost);
+    if (!titlePre && !titlePost && cfg && cfg.title) { titlePre = clean(cfg.title); titlePost = titlePre; } // ancienne page
     const session = String((cfg && cfg.session) || '').trim().slice(0, 60);
     const phase = cfg && cfg.phase;
-    if (!title) return { ok: false, message: 'Saisissez un titre d’activité.' };
-    if (!session) return { ok: false, message: 'Saisissez la session / classe (ex. « Vague 1 – chefs de poste »).' };
     if (PHASES.indexOf(phase) < 0) return { ok: false, message: 'Choisissez Pré-test ou Post-test.' };
+    if (phase === 'Pré-test' && !titlePre) return { ok: false, message: 'Saisissez le titre du pré-test.' };
+    if (phase === 'Post-test' && !titlePost) return { ok: false, message: 'Saisissez le titre du post-test.' };
+    if (!session) return { ok: false, message: 'Saisissez la session / classe (ex. « Vague 1 – chefs de poste »).' };
 
     const old = getConfig_();
-    const changed = old.title !== title || old.session !== session || old.phase !== phase;
+    // seuls la session et le test actif invalident un test en cours ; modifier un titre ne fait perdre aucune réponse
+    const changed = old.session !== session || old.phase !== phase;
     const config = {
       open: !!(cfg && cfg.open),
-      title: title,
+      titlePre: titlePre,
+      titlePost: titlePost,
       session: session,
       phase: phase,
       stamp: (changed || !old.stamp) ? String(Date.now()) : old.stamp
     };
     PropertiesService.getScriptProperties().setProperty('CONFIG', JSON.stringify(config));
-    return { ok: true, config: config };
+    return { ok: true, config: getConfig_() };
   } catch (err) {
     return { ok: false, message: err.message };
   }
@@ -496,7 +510,7 @@ function submitTest(p) {
     }
 
     const answers = p.answers || {};
-    const forced = p.timeout === true; // envoi automatique à la fin des 15 minutes
+    const forced = p.timeout === true; // envoi automatique à la fin du temps imparti
     const order = buildOrder_(id, c.session + '|' + c.phase);
     if (!forced) {
       for (let i = 0; i < order.length; i++) {

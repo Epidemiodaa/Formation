@@ -156,7 +156,7 @@
         <li>20 questions. Pour certaines, <b>plusieurs réponses sont possibles</b> : le point n’est accordé que si toutes les bonnes réponses, et seulement elles, sont cochées (tout ou rien).</li>
         <li>Répondez <b>seul</b>, sans document et sans téléphone.</li>
         <li>L’ordre des questions est différent d’une personne à l’autre.</li>
-        <li><b>Durée : 15 minutes</b> à partir du clic sur « Commencer ». À la fin du temps, vos réponses sont envoyées automatiquement et les questions sans réponse comptent comme fausses.</li>
+        <li><b>Durée : <span id="limitTxt">25</span> minutes</b> à partir du clic sur « Commencer ». À la fin du temps, vos réponses sont envoyées automatiquement et les questions sans réponse comptent comme fausses.</li>
         <li>Le test sert à mesurer vos progrès, pas à vous sanctionner.</li>
         <li>Après l’envoi de vos réponses, le <b>corrigé</b> s’affiche. Une fois envoyé, le test ne peut plus être modifié.</li>
       </ul>
@@ -168,7 +168,7 @@
   <!-- QUESTIONS -->
   <section id="s-quiz" hidden>
     <div class="card">
-      <div class="qhead"><span id="qCount"></span><span id="timer" class="timer">⏱ 15:00</span></div>
+      <div class="qhead"><span id="qCount"></span><span id="timer" class="timer">⏱ 25:00</span></div>
       <div class="prog"><div id="bar"></div></div>
       <p id="qText" class="qtext"></p>
       <div id="qCtx"></div>
@@ -215,8 +215,17 @@
   <section id="s-admin" hidden>
     <div class="card">
       <h2>Activité en cours <span id="admStatus" class="status closed">Fermée</span></h2>
-      <label class="lbl" for="cfgTitle">Titre de l’activité (affiché à tous les participants)</label>
-      <input id="cfgTitle" type="text" maxlength="100" placeholder="ex. Pré-test · Formation des chefs de poste · Vague 2">
+      <div class="row2">
+        <div>
+          <label class="lbl" for="cfgTitlePre">Titre du pré-test</label>
+          <input id="cfgTitlePre" type="text" maxlength="100" placeholder="ex. Pré-test · Formation des chefs de poste · Vague 2">
+        </div>
+        <div>
+          <label class="lbl" for="cfgTitlePost">Titre du post-test</label>
+          <input id="cfgTitlePost" type="text" maxlength="100" placeholder="ex. Post-test · Formation des chefs de poste · Vague 2">
+        </div>
+      </div>
+      <div class="hint">Chaque test a son propre titre, modifiable à tout moment. Les participants voient le titre du test activé ci-dessous.</div>
       <div class="row2">
         <div>
           <label class="lbl" for="cfgSession">Session / classe</label>
@@ -332,6 +341,7 @@ var API = {
         if (c && c.open){
           $('pageTitle').textContent = c.title;
           $('actTitle').textContent = c.title;
+          if (c.limitSec) { $('limitTxt').textContent = String(Math.round(c.limitSec / 60)); }
           $('startForm').hidden = false;
         } else {
           $('pageTitle').textContent = 'Test de connaissances · Surveillance épidémiologique';
@@ -363,7 +373,7 @@ var API = {
         if(!r || !r.ok){ msg('startErr', (r && r.message) || 'Erreur inconnue.'); return; }
         S.id = r.id; S.stamp = r.stamp; S.title = r.title; S.items = r.items; S.ans = {}; S.cur = 0;
         S.t0 = Date.now(); S.active = true; S.timedUp = false;
-        S.limitSec = r.limitSec || 900; S.deadline = S.t0 + S.limitSec * 1000;
+        S.limitSec = r.limitSec || 1500; S.deadline = S.t0 + S.limitSec * 1000;
         show('s-quiz'); render(); startTimer();
       })
       .withFailureHandler(function(){
@@ -719,7 +729,7 @@ var API = {
     $('resMsg').textContent = m;
     var rn = $('resNote');
     if (r.timedOut){
-      rn.textContent = 'Temps écoulé : vos réponses ont été envoyées automatiquement à la fin des 15 minutes. ' + r.unanswered + ' question(s) sans réponse comptent comme fausses.';
+      rn.textContent = 'Temps écoulé : vos réponses ont été envoyées automatiquement à la fin des ' + Math.round((S.limitSec || 1500) / 60) + ' minutes. ' + r.unanswered + ' question(s) sans réponse comptent comme fausses.';
       rn.hidden = false;
     } else { rn.hidden = true; }
     $('resId').textContent = (r.phase === 'Pré-test')
@@ -778,7 +788,8 @@ var API = {
   }
 
   function fillConfig(c){
-    $('cfgTitle').value = c.title || '';
+    $('cfgTitlePre').value = c.titlePre || '';
+    $('cfgTitlePost').value = c.titlePost || '';
     $('cfgSession').value = c.session || '';
     var radios = document.getElementsByName('cfgPhase');
     for (var i=0;i<radios.length;i++){ radios[i].checked = (radios[i].value === (c.phase || 'Pré-test')); }
@@ -803,7 +814,7 @@ var API = {
           : 'Enregistré. Le formulaire est fermé : les participants ne peuvent pas démarrer.', 'okmsg');
       })
       .withFailureHandler(function(){ $('btnSaveCfg').disabled = false; msg('cfgMsg','Connexion impossible.','err'); })
-      .adminSaveConfig(PW, { title:$('cfgTitle').value, session:$('cfgSession').value, phase:phase, open:$('cfgOpen').checked });
+      .adminSaveConfig(PW, { titlePre:$('cfgTitlePre').value, titlePost:$('cfgTitlePost').value, session:$('cfgSession').value, phase:phase, open:$('cfgOpen').checked });
   });
 
   $('btnLogout').addEventListener('click', function(){ PW=''; show('s-start'); loadConfig(); });
@@ -945,8 +956,8 @@ var API = {
 
   /* ---- Message WhatsApp ---- */
   function waText(){
-    var title = $('cfgTitle').value.trim() || '[titre de l’activité]';
     var phase = document.querySelector('input[name=cfgPhase]:checked').value;
+    var title = ($(phase === 'Pré-test' ? 'cfgTitlePre' : 'cfgTitlePost').value.trim()) || '[titre de l’activité]';
     var link = location.origin + location.pathname;
     if (phase === 'Pré-test'){
       return 'Bonjour 👋\n\n' +
@@ -970,7 +981,8 @@ var API = {
       'Merci de votre participation.';
   }
   function refreshWa(){ $('waMsg').value = waText(); }
-  $('cfgTitle').addEventListener('input', refreshWa);
+  $('cfgTitlePre').addEventListener('input', refreshWa);
+  $('cfgTitlePost').addEventListener('input', refreshWa);
   Array.prototype.forEach.call(document.getElementsByName('cfgPhase'), function(r){ r.addEventListener('change', refreshWa); });
   $('btnWaSend').addEventListener('click', function(){
     window.open('https://wa.me/?text=' + encodeURIComponent($('waMsg').value), '_blank');

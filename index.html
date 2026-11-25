@@ -26,6 +26,23 @@ input,textarea,select{width:100%;padding:8px;margin:4px 0 10px;border:1px solid 
 .msg{padding:6px 0;border-bottom:1px solid var(--bd)}.msg.me{background:rgba(11,110,79,.07)}
 table{border-collapse:collapse;font-size:.9em;margin:6px 0}th,td{border:1px solid var(--bd);padding:3px 7px;text-align:center}select{width:auto;max-width:100%;margin:4px 4px 4px 0}
 .dz{border:2px dashed var(--bd);border-radius:10px;padding:10px;margin:10px 0}.dz.over{border-color:var(--pr);background:rgba(11,110,79,.08)}.dz .msg[draggable=true]{cursor:grab}.lk{color:var(--pr);text-decoration:underline;cursor:pointer}
+/* Personnages animés (introduction des modules) */
+.stage{background:linear-gradient(#e6f5ee,var(--card));border:1px solid var(--bd);border-radius:12px;padding:12px;margin:10px 0}
+.chars{display:flex;justify-content:space-around;align-items:flex-end}
+.chw{width:112px;text-align:center;transition:opacity .3s,transform .3s}.chw.idle{opacity:.55;transform:scale(.93)}.chw b{font-size:.85em;color:var(--mu)}
+.chw svg{width:100%;height:auto;display:block}
+.chw .body{animation:bob 3s ease-in-out infinite}.chw .eye,.chw .mouth,.chw .ant,.chw .arm{transform-box:fill-box}
+.chw .eye{transform-origin:center;animation:blink 4.5s infinite}.chw .ant{transform-origin:center;animation:pulse 1.6s ease-in-out infinite}
+.chw .mouth{transform-origin:center}.chw.talk .mouth{animation:talk .22s ease-in-out infinite alternate}
+.chw .arm{transform-origin:50% 0}.chw.hello .arm{animation:wave .7s ease-in-out infinite alternate}
+@keyframes bob{50%{transform:translateY(-4px)}}@keyframes blink{0%,93%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}
+@keyframes pulse{50%{transform:scale(1.35);opacity:.7}}@keyframes talk{to{transform:scaleY(2.6)}}@keyframes wave{from{transform:rotate(-8deg)}to{transform:rotate(-55deg)}}
+.bub{position:relative;background:var(--card);border:2px solid var(--pr);border-radius:14px;padding:10px 12px;margin:14px 0 8px;min-height:3.4em}
+.bub::before{content:"";position:absolute;top:-10px;width:16px;height:16px;background:var(--card);border-left:2px solid var(--pr);border-top:2px solid var(--pr);transform:rotate(45deg)}
+.bub.l::before{left:20%}.bub.r::before{right:20%}
+.steps{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.steps button{background:none;color:var(--tx);border:1px solid var(--bd);padding:6px 11px}.steps button.on{background:var(--pr);color:#fff;border-color:var(--pr)}.steps button.ok2{border-color:var(--pr);color:var(--pr)}.steps button.on.ok2{color:#fff}.steps button:disabled{opacity:.45;cursor:not-allowed}
+.nav2{display:flex;justify-content:space-between;gap:8px;margin:14px 0;flex-wrap:wrap}.nav2 button:disabled{opacity:.45;cursor:not-allowed}
+@media(prefers-reduced-motion:reduce){.chw *{animation:none!important}}
 label.o{display:block;padding:6px 8px;border:1px solid var(--bd);border-radius:8px;margin:4px 0;cursor:pointer}label.o input{width:auto;margin:0 8px 0 0}
 </style>
 </head>
@@ -37,7 +54,7 @@ label.o{display:block;padding:6px 8px;border:1px solid var(--bd);border-radius:8
 const API_URL = 'https://script.google.com/macros/s/AKfycbzmylSAU7ocsFHMVDGNaO2jladI_obqWVw8m-4pkVr4R1gVxmZU8kRQjwqSfczdIVEE/exec';
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let tmr = null;
+let tmr = null, typ = null;
 let tok = localStorage.getItem('tok'), pseudo = localStorage.getItem('pseudo'), adminPw = null, timer = null, cur = null;
 
 async function api(action, ...args) {
@@ -50,7 +67,7 @@ async function api(action, ...args) {
   try { return JSON.parse(txt); }
   catch (e) { return { ok: false, message: 'Le serveur a répondu autre chose que des données (autorisation ou déploiement à refaire : exécutez setup() dans Apps Script, puis redéployez en « Nouvelle version »).' }; }
 }
-function view(html) { clearInterval(timer); clearInterval(tmr); $('#app').innerHTML = html; window.scrollTo(0, 0); }
+function view(html) { clearInterval(timer); clearInterval(tmr); clearInterval(typ); $('#app').innerHTML = html; window.scrollTo(0, 0); }
 function nav() {
   $('#nav').innerHTML = tok ? `<button class="l" onclick="home()">Mes cours</button><button class="l" onclick="profile()">${esc(pseudo)}</button><button class="l" onclick="logout()">Quitter</button>` : `<button class="l" onclick="admin()">Admin</button>`;
 }
@@ -105,37 +122,125 @@ async function openCourse(id, tab) {
   view('<p class="mu">Chargement…</p>');
   const r = await api('course', tok, id); if (!r.ok) { fail(r); return home(); }
   cur = r; tab = tab || (r.verrous.docs ? 'Pré-test' : 'docs');
-  const T = [['docs', 'Documents'], ['Pré-test', 'Pré-test'], ['Post-test', 'Post-test'], ['chat', 'Discussion']];
+  const T = [['docs', 'Cours'], ['Pré-test', 'Pré-test'], ['Post-test', 'Post-test'], ['chat', 'Discussion']], base = tab.indexOf('quiz:') === 0 ? 'docs' : tab;
   view(`<h2>${esc(r.titre)}</h2><p class="mu">${esc(r.description)}</p>
-  <div class="tabs">${T.map(t => `<button class="${t[0] === tab ? 'on' : ''}" onclick="openCourse('${id}','${t[0]}')">${lockOf(t[0]) ? '🔒 ' : ''}${t[1]}</button>`).join('')}</div><div id="tab"></div>`);
+  <div class="tabs">${T.map(t => `<button class="${t[0] === base ? 'on' : ''}" onclick="openCourse('${id}','${t[0]}')">${lockOf(t[0]) ? '🔒 ' : ''}${t[1]}</button>`).join('')}</div><div id="tab"></div>`);
   if (tab === 'docs') docsTab(id);
+  else if (base !== tab) quizHome(id, tab.slice(5));
   else if (tab === 'chat') chat(id);
   else testHome(id, tab);
 }
 
-/* ---------- Documents : lecture obligatoire ---------- */
-// Ordre imposé : pré-test → documents (tous ouverts, lus et marqués) → post-test. Le serveur applique les mêmes règles.
+/* ---------- Cours : modules (documents à lire, puis quiz) ---------- */
+// Ordre : pré-test (sauf s'il est facultatif) → modules dans l'ordre (documents lus et marqués, puis quiz réussi) → post-test. Le serveur applique les mêmes règles.
 const lockOf = t => t === 'docs' ? cur.verrous.docs : t === 'Post-test' ? cur.verrous.post && !cur.resultats['Post-test'] : false;
-function docsTab(id) {
-  if (cur.verrous.docs) return $('#tab').innerHTML = `<div class="card"><b>🔒 Documents verrouillés</b><p class="mu">Passez d’abord le pré-test : les documents du cours s’afficheront ensuite.</p><button onclick="openCourse('${id}','Pré-test')">Aller au pré-test</button></div>`;
-  const L = cur.lecture, docs = cur.documents;
-  const bar = L.total ? `<div class="card"><b>Documents lus : ${L.lus} / ${L.total}</b><p class="mu">${L.lus === L.total
-    ? 'Tous les documents sont marqués comme lus : le post-test est débloqué.'
-    : 'Ouvrez chaque document, lisez-le en entier, puis cliquez sur « J’ai lu ce document en entier ». Le post-test s’ouvrira quand tous seront marqués.'}</p>${L.lus === L.total && cur.nbQuestions['Post-test'] && !cur.resultats['Post-test'] ? `<button onclick="openCourse('${id}','Post-test')">Passer au post-test</button>` : ''}</div>` : '';
-  const req = docs.filter(d => !d.facultatif), opt = docs.filter(d => d.facultatif);
-  const card = d => `<div class="card">📄 <a href="${esc(d.url)}" target="_blank" rel="noopener" ${d.facultatif ? '' : `onclick="docOpened('${id}','${d.id}')"`}>${esc(d.titre)}</a>${d.facultatif ? '' : `
+let modIdx = null;
+function docCard(id, d) {
+  return `<div class="card">📄 <a href="${esc(d.url)}" target="_blank" rel="noopener" ${d.facultatif ? '' : `onclick="docOpened('${id}','${d.id}')"`}>${esc(d.titre)}</a>${d.facultatif ? '' : `
       <div id="dz_${d.id}">${docState(id, d)}</div>`}</div>`;
-  $('#tab').innerHTML = bar + cur.blocs.map(b => `<div class="card">${b.titre ? '<b>' + esc(b.titre) + '</b><br>' : ''}${esc(b.texte).replace(/\n/g, '<br>')}</div>`).join('')
-    + (req.length ? '<h3>Documents à lire</h3>' + req.map(card).join('') : '')
-    + (opt.length ? '<h3>Ressources complémentaires</h3><p class="mu">Facultatives : à consulter librement, sans effet sur l’accès au post-test.</p>' + opt.map(card).join('') : '')
-    || '<p class="mu">Aucun contenu pour le moment.</p>';
 }
+const stepsOf = () => cur.sequences.map(s => ({ s })).concat(cur.ressources.length ? [{ res: true }] : []);
+function moduleBody(id, s, n) {
+  const req = s.documents.filter(d => !d.facultatif), opt = s.documents.filter(d => d.facultatif), q = s.quiz;
+  return `<div class="card"><h3>${s.virtual ? '' : 'Module ' + n + ' — '}${esc(s.titre)} ${s.complete ? '<span class="ok">✔ terminé</span>' : ''}</h3>
+    ${req.length ? `<p class="mu">Documents lus : <b>${s.lus} / ${s.total}</b></p>` : ''}<button class="l" onclick="replayIntro('${id}','${s.id}')">▶ Revoir l’introduction</button></div>`
+    + req.map(d => docCard(id, d)).join('')
+    + (opt.length ? '<p class="mu">Ressources facultatives de ce module :</p>' + opt.map(d => docCard(id, d)).join('') : '')
+    + (q ? `<div class="card"><b>📝 Quiz du module</b> <span class="mu">(${q.n} question${q.n > 1 ? 's' : ''}${q.seuil > 0 ? ' · réussite à partir de ' + q.seuil + ' %' : ''})</span>`
+      + (q.reussi ? `<p class="ok">✔ Quiz réussi : ${q.meilleur.score} / ${q.meilleur.total}</p><button class="s" onclick="openCourse('${id}','quiz:${s.id}')">Revoir ma correction</button>`
+        : !s.lu ? '<p class="mu">🔒 Le quiz s’ouvre quand tous les documents obligatoires de ce module sont marqués comme lus.</p>'
+        : q.essais ? `<p class="er">Dernier essai : ${q.dernier.score} / ${q.dernier.total} — il faut ${q.seuil} % pour passer au module suivant.</p><button onclick="openCourse('${id}','quiz:${s.id}')">Voir la correction et réessayer</button>`
+        : `<p class="mu">Tous les documents sont lus : le quiz est ouvert.${q.seuil > 0 ? ' Il faut le réussir pour débloquer le module suivant.' : ''}</p><button onclick="openCourse('${id}','quiz:${s.id}')">Passer le quiz</button>`) + '</div>' : '');
+}
+function docsTab(id, idx) {
+  if (cur.verrous.docs) return $('#tab').innerHTML = `<div class="card"><b>🔒 Cours verrouillé</b><p class="mu">Passez d’abord le pré-test : le contenu du cours s’affichera ensuite.</p><button onclick="openCourse('${id}','Pré-test')">Aller au pré-test</button></div>`;
+  const st = stepsOf(), V = cur.verrous, blocs = cur.blocs.map(b => `<div class="card">${b.titre ? '<b>' + esc(b.titre) + '</b><br>' : ''}${esc(b.texte).replace(/\n/g, '<br>')}</div>`).join('');
+  const postBtn = !V.post && cur.nbQuestions['Post-test'] && !cur.resultats['Post-test'] ? `<button onclick="openCourse('${id}','Post-test')">Passer au post-test ▸</button>` : '';
+  if (!st.length) return $('#tab').innerHTML = blocs + '<p class="mu">Aucun contenu pour le moment.</p>' + postBtn;
+  if (idx === undefined) { const f = st.findIndex(x => x.s && !x.s.complete && !x.s.verrouille); idx = modIdx !== null && modIdx < st.length && modIdx >= 0 ? modIdx : (f >= 0 ? f : st.length - 1); }
+  if (st[idx].s && st[idx].s.verrouille) idx = Math.max(0, st.findIndex(x => x.s && x.s.verrouille) - 1);
+  modIdx = idx;
+  let n = 0; const num = st.map(x => x.s && !x.s.virtual ? ++n : 0);
+  const stepper = `<div class="steps">${st.map((x, i) => x.res ? `<button class="${i === idx ? 'on' : ''}" onclick="docsTab('${id}',${i})">📎 Ressources</button>`
+    : `<button class="${i === idx ? 'on' : ''} ${x.s.complete ? 'ok2' : ''}" ${x.s.verrouille ? 'disabled' : ''} onclick="docsTab('${id}',${i})" title="${esc(x.s.titre)}">${x.s.verrouille ? '🔒' : x.s.complete ? '✔' : ''} ${x.s.virtual ? 'Intro' : 'Module ' + num[i]}</button>`).join('')}</div>`;
+  const cu = st[idx], nx = st[idx + 1], pv = st[idx - 1];
+  const nextOk = nx && !(nx.s && nx.s.verrouille);
+  let body;
+  if (cu.res) body = '<h3>Ressources complémentaires</h3><p class="mu">Facultatives : à consulter librement, sans effet sur l’accès au post-test.</p>' + cur.ressources.map(d => docCard(id, d)).join('');
+  else if (!introSeen(id, cu.s.id)) body = introHtml();
+  else body = moduleBody(id, cu.s, num[idx]);
+  const hint = nx && !nextOk ? '<p class="mu" style="text-align:right">Terminez ce module (documents lus et quiz réussi) pour ouvrir le suivant.</p>' : '';
+  $('#tab').innerHTML = blocs + stepper + body
+    + `<div class="nav2"><button class="s" ${pv ? '' : 'disabled'} onclick="docsTab('${id}',${idx - 1})">◂ Module précédent</button>`
+    + (nx ? `<button ${nextOk ? '' : 'disabled'} onclick="docsTab('${id}',${idx + 1})">Module suivant ▸</button>` : postBtn || '<span></span>') + '</div>' + hint
+    + `<p class="mu">Modules terminés : ${V.seqTotal - V.seqRestantes} / ${V.seqTotal}${V.seqTotal ? (V.post ? ' — le post-test s’ouvre quand tous les modules sont terminés.' : ' — le post-test est débloqué.') : ''}</p>`;
+  if (!cu.res && !introSeen(id, cu.s.id)) introStart(id, cu.s);
+}
+
+/* ---------- Introduction des modules : personnages animés (SVG + CSS, sans serveur) ---------- */
+const AWA = `<svg viewBox="0 0 120 170" aria-hidden="true"><ellipse cx="60" cy="165" rx="38" ry="5" fill="rgba(0,0,0,.15)"/><g class="body"><circle cx="60" cy="40" r="31" fill="#1f1a17"/>
+  <rect x="30" y="76" width="60" height="84" rx="14" fill="#fff" stroke="#cfd6dc"/><path d="M46 76 L60 106 L74 76 Z" fill="#0b6e4f"/><rect x="53" y="64" width="14" height="14" fill="#8a5a3c"/>
+  <rect x="22" y="80" width="14" height="52" rx="7" fill="#fff" stroke="#cfd6dc"/><circle cx="29" cy="136" r="7" fill="#8a5a3c"/>
+  <g class="arm"><rect x="84" y="80" width="14" height="46" rx="7" fill="#fff" stroke="#cfd6dc"/><circle cx="91" cy="128" r="7" fill="#8a5a3c"/></g>
+  <circle cx="60" cy="48" r="25" fill="#8a5a3c"/><ellipse class="eye" cx="50" cy="46" rx="3" ry="4" fill="#111"/><ellipse class="eye" cx="70" cy="46" rx="3" ry="4" fill="#111"/>
+  <path d="M43 39 Q50 35 57 39M63 39 Q70 35 77 39" stroke="#1f1a17" stroke-width="2" fill="none"/><circle cx="42" cy="55" r="4" fill="#d9776a" opacity=".35"/><circle cx="78" cy="55" r="4" fill="#d9776a" opacity=".35"/>
+  <ellipse class="mouth" cx="60" cy="59" rx="6" ry="2" fill="#5a1f1f"/></g></svg>`;
+const KOFI = `<svg viewBox="0 0 120 170" aria-hidden="true"><ellipse cx="60" cy="165" rx="38" ry="5" fill="rgba(0,0,0,.15)"/><g class="body"><line x1="60" y1="14" x2="60" y2="28" stroke="#6b7a8c" stroke-width="3"/><circle class="ant" cx="60" cy="12" r="5" fill="#f5b83d"/>
+  <rect x="30" y="26" width="60" height="50" rx="16" fill="#5b8def"/><rect x="37" y="33" width="46" height="34" rx="10" fill="#0e2236"/>
+  <ellipse class="eye" cx="50" cy="47" rx="5" ry="6" fill="#7ee8ff"/><ellipse class="eye" cx="70" cy="47" rx="5" ry="6" fill="#7ee8ff"/><rect class="mouth" x="53" y="58" width="14" height="3" rx="1.5" fill="#7ee8ff"/>
+  <rect x="52" y="76" width="16" height="8" fill="#9aa8ba"/><rect x="34" y="84" width="52" height="76" rx="14" fill="#dfe7f3" stroke="#b9c6d8"/><circle cx="60" cy="110" r="10" fill="#0b6e4f"/><circle class="ant" cx="60" cy="110" r="4" fill="#9ff0c8"/>
+  <rect x="20" y="88" width="14" height="46" rx="7" fill="#9aa8ba"/><g class="arm"><rect x="86" y="88" width="14" height="46" rx="7" fill="#9aa8ba"/></g></g></svg>`;
+let intro = null;
+const seenKey = (cid, sid) => 'intro_' + cid + '_' + sid, seenMem = {};
+function introSeen(cid, sid) { try { return !!localStorage.getItem(seenKey(cid, sid)); } catch (e) { return !!seenMem[seenKey(cid, sid)]; } }
+function setSeen(cid, sid, v) { try { v ? localStorage.setItem(seenKey(cid, sid), '1') : localStorage.removeItem(seenKey(cid, sid)); } catch (e) { seenMem[seenKey(cid, sid)] = v; } }
+function introHtml() {
+  return `<div class="stage"><div class="chars"><div class="chw" id="chA">${AWA}<b>Awa</b></div><div class="chw" id="chK">${KOFI}<b>Kofi</b></div></div>
+  <div class="bub l" id="bub" aria-live="polite"></div><div class="nav2"><button class="l" onclick="introEnd()">Passer l’introduction</button><button id="inx" onclick="introNext()">Suivant ▸</button></div></div>`;
+}
+/** Répliques : texte de l'administrateur (une par ligne ; « Awa: » ou « Kofi: » choisit qui parle) ou introduction automatique. */
+function introLines(s) {
+  const own = String(s.intro || '').split('\n').map(x => x.trim()).filter(Boolean), out = []; let last = 'K';
+  const auto = [];
+  if (!own.length) {
+    const nd = s.documents.filter(d => !d.facultatif).length, q = s.quiz;
+    auto.push('A:Bienvenue ' + (s.virtual ? 'dans l’introduction du cours !' : 'dans le module « ' + s.titre + ' » !'));
+    auto.push('K:' + (nd ? 'Vous avez ' + nd + ' document' + (nd > 1 ? 's' : '') + ' à ouvrir et à lire en entier, puis à marquer comme lu' + (nd > 1 ? 's' : '') + '.' : 'Ce module ne contient pas de document obligatoire.'));
+    if (q) auto.push('A:Ensuite, un quiz de ' + q.n + ' question' + (q.n > 1 ? 's' : '') + (q.seuil > 0 ? ' vous attend : il faut au moins ' + q.seuil + ' % pour débloquer le module suivant. Vous pouvez le repasser si besoin.' : ' vous attend.'));
+    auto.push('K:Prêt ? C’est parti !');
+  }
+  (own.length ? own : auto).forEach(l => {
+    const m = /^(awa|kofi|a|k)\s*:\s*(.*)$/i.exec(l); let who;
+    if (m) { who = m[1][0].toUpperCase(); l = m[2]; } else who = last === 'A' ? 'K' : 'A';
+    if (l) { out.push({ who, t: l }); last = who; }
+  });
+  return out;
+}
+function introStart(cid, s) { intro = { cid, sid: s.id, lines: introLines(s), i: -1, full: '', pos: 0 }; introNext(); }
+function introNext() {
+  if (!intro) return;
+  if (typ) { clearInterval(typ); typ = null; $('#bub').textContent = intro.full; return introIdle(); } // 1er clic : afficher tout le texte
+  if (intro.i + 1 >= intro.lines.length) return introEnd();
+  const L = intro.lines[++intro.i]; intro.full = L.t; intro.pos = 0;
+  const a = $('#chA'), k = $('#chK'), sp = L.who === 'A' ? a : k, ot = L.who === 'A' ? k : a;
+  sp.className = 'chw talk' + (intro.i === 0 ? ' hello' : ''); ot.className = 'chw idle';
+  $('#bub').className = 'bub ' + (L.who === 'A' ? 'l' : 'r'); $('#bub').textContent = '';
+  typ = setInterval(() => { intro.pos++; $('#bub').textContent = intro.full.slice(0, intro.pos); if (intro.pos >= intro.full.length) { clearInterval(typ); typ = null; introIdle(); } }, 22);
+}
+function introIdle() {
+  ['chA', 'chK'].forEach(i => { const e = $('#' + i); if (e) e.classList.remove('talk', 'hello'); });
+  const b = $('#inx'); if (b) b.textContent = intro.i + 1 >= intro.lines.length ? 'Commencer le module ▸' : 'Suivant ▸';
+}
+function introEnd() { if (!intro) return; const { cid, sid } = intro; intro = null; clearInterval(typ); typ = null; setSeen(cid, sid, true); docsTab(cid); }
+function replayIntro(cid, sid) { setSeen(cid, sid, false); docsTab(cid); }
+
 function docState(cid, d) {
   return d.lu ? '<span class="ok">✔ Lu et marqué</span>'
     : `<button class="s" id="mk_${d.id}" ${d.ouvert ? '' : 'disabled style="opacity:.5"'} onclick="docRead('${cid}','${d.id}')">J’ai lu ce document en entier</button>${d.ouvert ? '' : ' <span class="mu">Ouvrez le document d’abord.</span>'}`;
 }
+function findDoc(did) { const all = cur.sequences.reduce((a, s) => a.concat(s.documents), cur.ressources); return all.filter(x => x.id === did)[0]; }
 async function docOpened(cid, did) {
-  const d = cur.documents.filter(x => x.id === did)[0]; if (!d || d.ouvert) return;
+  const d = findDoc(did); if (!d || d.ouvert) return;
   const r = await api('openDoc', tok, cid, did); if (!r.ok) return;
   d.ouvert = true; const z = $('#dz_' + did); if (z) z.innerHTML = docState(cid, d);
 }
@@ -147,13 +252,28 @@ async function docRead(cid, did) {
 
 /* ---------- Tests ---------- */
 let curTest = null, sending = false;
+function corrHtml(c) {
+  return (c || []).map(x => `<div class="card"><b>${esc(x.q)}</b><div class="${x.ok ? 'ok' : 'er'}">${x.ok ? '✔ Correct' : '✘ Incorrect'}</div>
+    <div><span class="mu">Votre réponse :</span> ${x.rep && x.rep.length ? x.rep.map(esc).join(' ; ') : '<i>aucune réponse</i>'}</div>
+    ${x.bonnes && x.bonnes.length ? `<div><span class="mu">Réponse correcte :</span> ${x.bonnes.map(esc).join(' ; ')}</div>` : ''}${x.explication ? `<div class="mu">${esc(x.explication)}</div>` : ''}</div>`).join('');
+}
 function testHome(id, ph) {
   const res = cur.resultats[ph], n = cur.nbQuestions[ph];
-  if (!res && lockOf(ph)) return $('#tab').innerHTML = `<div class="card"><b>🔒 Post-test verrouillé</b><p class="mu">${cur.verrous.preManquant ? 'Passez d’abord le pré-test, puis lisez et marquez tous les documents du cours.'
-    : `Il vous reste ${cur.verrous.docsManquants} document(s) à ouvrir, lire en entier et marquer comme lu(s) (${cur.lecture.lus} / ${cur.lecture.total}).`}</p><button onclick="openCourse('${id}','${cur.verrous.preManquant ? 'Pré-test' : 'docs'}')">${cur.verrous.preManquant ? 'Aller au pré-test' : 'Aller aux documents'}</button></div>`;
-  $('#tab').innerHTML = res ? `<div class="card"><b>${ph} terminé</b><p class="ok">Score : ${res.score} / ${res.total}</p></div>`
-    : n ? `<div class="card"><p>${n} question(s), 25 minutes. Vous ne pouvez passer ce test qu’une fois ; votre pseudonyme (<b>${esc(pseudo)}</b>) est votre code de travail.</p><button onclick="startTest('${id}','${ph}')">Commencer le ${ph.toLowerCase()}</button></div>`
+  if (!res && lockOf(ph)) return $('#tab').innerHTML = `<div class="card"><b>🔒 Post-test verrouillé</b><p class="mu">${cur.verrous.preManquant ? 'Passez d’abord le pré-test, puis terminez chaque module du cours (documents lus et quiz réussi).'
+    : `Il vous reste ${cur.verrous.seqRestantes} module(s) à terminer (documents lus et marqués, puis quiz réussi).`}</p><button onclick="openCourse('${id}','${cur.verrous.preManquant ? 'Pré-test' : 'docs'}')">${cur.verrous.preManquant ? 'Aller au pré-test' : 'Aller au cours'}</button></div>`;
+  $('#tab').innerHTML = res ? `<div class="card"><b>${ph} terminé</b><p class="ok">Score : ${res.score} / ${res.total}</p></div>${corrHtml(res.corrige)}`
+    : n ? `<div class="card">${ph === 'Pré-test' && cur.pretestFacultatif ? '<p class="mu">Ce pré-test est facultatif : le cours est accessible sans le passer.</p>' : ''}<p>${n} question(s), 25 minutes. Vous ne pouvez passer ce test qu’une fois ; votre pseudonyme (<b>${esc(pseudo)}</b>) est votre code de travail.</p><button onclick="startTest('${id}','${ph}')">Commencer le ${ph.toLowerCase()}</button></div>`
     : '<p class="mu">Ce test n’est pas encore prêt.</p>';
+}
+function quizHome(id, sid) {
+  const s = cur.sequences.filter(x => x.id === sid)[0], back = `<button class="s" onclick="openCourse('${id}','docs')">← Retour au module</button>`;
+  if (!s || !s.quiz) return docsTab(id);
+  const q = s.quiz;
+  if (s.verrouille || !s.lu) return $('#tab').innerHTML = `${back}<div class="card"><b>🔒 Quiz verrouillé</b><p class="mu">Marquez d’abord tous les documents obligatoires du module comme lus.</p></div>`;
+  const info = `<p>${q.n} question(s), 15 minutes.${q.seuil > 0 ? ' Réussite à partir de <b>' + q.seuil + ' %</b> : il faut réussir ce quiz pour ouvrir le module suivant. Vous pouvez le repasser autant de fois que nécessaire.' : ''} Code de travail : <b>${esc(pseudo)}</b>.</p>`;
+  if (q.reussi) return $('#tab').innerHTML = `${back}<div class="card"><b>Quiz : ${esc(s.titre)}</b><p class="ok">✔ Réussi — ${q.dernier.score} / ${q.dernier.total}</p></div>${corrHtml(q.dernier.corrige)}`;
+  $('#tab').innerHTML = `${back}` + (q.dernier ? `<div class="card"><b>Dernier essai : ${q.dernier.score} / ${q.dernier.total}</b><p class="er">Pas encore la note de réussite (${q.seuil} %). Relisez la correction, puis réessayez.</p></div>${corrHtml(q.dernier.corrige)}` : '')
+    + `<div class="card"><b>Quiz : ${esc(s.titre)}</b>${info}<button onclick="startTest('${id}','Quiz','${sid}')">${q.dernier ? 'Réessayer le quiz' : 'Commencer le quiz'}</button></div>`;
 }
 const tbl = (head, rows) => `<div style="overflow-x:auto"><table><tr>${head.map(x => `<th>${esc(x)}</th>`).join('')}</tr>${rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table></div>`;
 const rptTable = r => tbl(['', '< 5 ans M', '< 5 ans F', '≥ 5 ans M', '≥ 5 ans F', 'Total'], r.map((l, i) => [['Suspects', 'Décès', 'Confirmés'][i]].concat(l)));
@@ -178,9 +298,9 @@ function renderQ(q, n) {
   else s += (q.multi ? '<div class="mu">Plusieurs réponses possibles</div>' : '') + q.o.map(o => `<label class="o"><input type="${q.multi ? 'checkbox' : 'radio'}" name="q${q.id}" value="${o.i}">${o.chart ? chartSvg(o.chart, q.chartData) : o.rpt ? rptTable(o.rpt) : esc(o.t)}</label>`).join('');
   return s + '</div>';
 }
-async function startTest(id, ph) {
-  const r = await api('startTest', tok, id, ph); if (!r.ok) return alert(r.message);
-  curTest = { id, ph }; sending = false; let left = r.limitSec;
+async function startTest(id, ph, sid) {
+  const r = await api('startTest', tok, id, ph, sid || ''); if (!r.ok) return alert(r.message);
+  curTest = { id, ph, sid: sid || '' }; sending = false; let left = r.limitSec;
   $('#tab').innerHTML = `<div class="card"><b>Code de travail (pseudonyme) : ${esc(r.pseudo)}</b><div class="mu">Temps restant : <span id="cd"></span>. À la fin du temps, vos réponses partent automatiquement ; une question sans réponse compte comme fausse.</div></div>`
     + r.questions.map(renderQ).join('') + `<button onclick="sendTest()">Envoyer mes réponses</button>`;
   const tick = () => { if ($('#cd')) $('#cd').textContent = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0'); if (left-- <= 0) { clearInterval(tmr); sendTest(); } };
@@ -193,11 +313,10 @@ async function sendTest() {
     if (t === 'dates') { const o = {}; c.querySelectorAll('select[data-k]').forEach(s => o[s.dataset.k] = s.value); rep[id] = o; }
     else if (t === 'match') { const a = []; c.querySelectorAll('select[data-r]').forEach(s => { (a[+s.dataset.r] = a[+s.dataset.r] || ['', ''])[+s.dataset.c] = s.value; }); rep[id] = a; }
     else rep[id] = [...c.querySelectorAll('input:checked')].map(i => +i.value); });
-  const r = await api('submitTest', tok, curTest.id, curTest.ph, rep); if (!r.ok) { sending = false; return alert(r.message); }
-  cur.resultats[curTest.ph] = { score: r.score, total: r.total };
-  $('#tab').innerHTML = `<div class="card"><h3 class="ok">Score : ${r.score} / ${r.total}</h3><div class="mu">Code de travail : ${esc(r.pseudo)}</div></div>` + r.corrige.map(c => `<div class="card"><b>${esc(c.q)}</b>
-    <div class="${c.ok ? 'ok' : 'er'}">${c.ok ? '✔ Correct' : '✘ Incorrect'}</div>${c.bonnes.length ? `<div class="mu">Bonne réponse : ${c.bonnes.map(esc).join(' ; ')}</div>` : ''}<div>${esc(c.explication)}</div></div>`).join('')
-    + (curTest.ph === 'Pré-test' ? `<button onclick="openCourse('${curTest.id}','docs')">Accéder aux documents du cours</button>` : '');
+  const r = await api('submitTest', tok, curTest.id, curTest.ph, rep, curTest.sid); if (!r.ok) { sending = false; return alert(r.message); }
+  if (curTest.ph !== 'Quiz') cur.resultats[curTest.ph] = { score: r.score, total: r.total, corrige: r.corrige };
+  $('#tab').innerHTML = `<div class="card"><h3 class="${r.reussi === false ? 'er' : 'ok'}">Score : ${r.score} / ${r.total}${r.reussi === true ? ' — Quiz réussi ✔' : r.reussi === false ? ' — Réussite à partir de ' + r.seuil + ' %' : ''}</h3><div class="mu">Code de travail : ${esc(r.pseudo)}</div></div>` + corrHtml(r.corrige)
+    + (curTest.ph === 'Pré-test' ? `<button onclick="openCourse('${curTest.id}','docs')">Accéder au cours</button>` : curTest.ph === 'Quiz' ? (r.reussi === false ? `<button onclick="openCourse('${curTest.id}','quiz:${curTest.sid}')">Réessayer le quiz</button> ` : '') + `<button class="${r.reussi === false ? 's' : ''}" onclick="openCourse('${curTest.id}','docs')">${r.reussi === false ? 'Retour au module' : 'Continuer le cours'}</button>` : '');
 }
 
 /* ---------- Discussion ---------- */
@@ -231,7 +350,7 @@ async function adminHome() {
 async function newCourse() { const r = await api('adminSaveCourse', adminPw, { titre: $('#ct').value, description: $('#cd').value }); r.ok ? adminCourse(r.id) : alert(r.message); }
 async function importMPE() { if (!confirm('Importer le cours MPE avec ses 20 questions en pré-test et en post-test ?')) return; const r = await api('adminImporterMPE', adminPw); alert(r.message || 'Fait.'); adminHome(); }
 async function saveCourse(id) {
-  const r = await api('adminSaveCourse', adminPw, { id, titre: $('#ct').value, description: $('#cd').value, actif: $('#ca').checked });
+  const r = await api('adminSaveCourse', adminPw, { id, titre: $('#ct').value, description: $('#cd').value, actif: $('#ca').checked, pretest: $('#cpre').value, seuil: $('#cseuil').value });
   r.ok ? (alert('Enregistré.'), adminCourse(id)) : alert(r.message);
 }
 async function delCourse(id) {
@@ -253,19 +372,28 @@ async function adminCourse(id) {
   admDet = r; const c = r.cours, row = (t, rid, label) => `<div class="msg">${label} <button class="l" onclick="edit('${t}','${rid}','${id}')">Modifier</button><button class="l" onclick="del('${t}','${rid}','${id}')">Supprimer</button></div>`;
   view(`<button class="s" onclick="adminHome()">← Retour</button><h2>${esc(c.titre)}</h2>
   <div class="card"><h3>Informations du cours</h3><input id="ct" value="${esc(c.titre)}"><textarea id="cd" rows="3" placeholder="Description">${esc(c.description)}</textarea>
-  <label class="o"><input type="checkbox" id="ca" ${c.actif ? 'checked' : ''}> Cours visible par les utilisateurs</label><button onclick="saveCourse('${id}')">Enregistrer</button></div>
+  <label class="o"><input type="checkbox" id="ca" ${c.actif ? 'checked' : ''}> Cours visible par les utilisateurs</label>
+  <label>Pré-test</label><select id="cpre"><option value="obligatoire" ${c.pretest === 'facultatif' ? '' : 'selected'}>Obligatoire avant d’accéder au cours</option><option value="facultatif" ${c.pretest === 'facultatif' ? 'selected' : ''}>Facultatif : le cours est accessible tout de suite</option></select>
+  <label>Note de réussite des quiz (%) — le module suivant ne s’ouvre qu’après un quiz réussi ; 0 = aucune exigence</label><input id="cseuil" type="number" min="0" max="100" value="${c.seuil}"><button onclick="saveCourse('${id}')">Enregistrer</button></div>
   <div class="card"><h3>Texte sur la page du cours</h3>${r.blocs.map(b => row('Blocs', b.id, '<b>' + esc(b.titre) + '</b> ' + esc(b.texte).slice(0, 80))).join('')}
   <input id="bt" placeholder="Titre (facultatif)"><textarea id="bx" rows="3" placeholder="Texte : objectifs, consignes, résumé…"></textarea><button onclick="addBloc('${id}')">Ajouter</button></div>
-  <div class="card"><h3>Documents</h3><p class="mu">Glissez plusieurs fichiers à la fois dans la zone voulue (ou cliquez sur « choisissez-les »). Vous pouvez aussi glisser un document existant d’une zone à l’autre pour changer son statut.</p>
-  ${dzone(id, false, '📌 Lecture obligatoire', r.documents.filter(d => !d.facultatif))}${dzone(id, true, '📎 Facultatif (ressources complémentaires)', r.documents.filter(d => d.facultatif))}
-  <h4>Ajouter un lien</h4><input id="dt" placeholder="Titre du document"><input id="du" placeholder="Lien (Drive, YouTube, site…)"><label class="o"><input type="checkbox" id="dfac"> Facultatif (pas de lecture obligatoire)</label><button onclick="addDoc('${id}')">Ajouter le lien</button></div>
-  <div class="card"><h3>Questions (${r.questions.length})</h3><div style="max-height:220px;overflow:auto">${r.questions.map(q => row('Questions', q.id, `<span class="mu">${q.phase} · ${q.type}</span> ${esc(q.question).slice(0, 70)}`)).join('')}</div>
-  <select id="qp"><option>Pré-test</option><option>Post-test</option></select><textarea id="qq" rows="2" placeholder="Question"></textarea><textarea id="qo" rows="4" placeholder="Un choix par ligne"></textarea>
+  <div class="card"><h3>Modules du cours</h3><p class="mu">Un cours est une suite de modules : l’apprenant lit les documents obligatoires d’une séquence, passe son quiz, puis accède à le module suivante. Le post-test s’ouvre après la dernière. Glissez plusieurs fichiers à la fois dans la zone voulue (ou cliquez sur « choisissez-les »), et glissez un document existant d’une zone à l’autre pour changer son statut ou sa séquence.</p>
+  ${r.sequences.map((x, i) => `<div class="card" style="border-color:var(--pr)"><h3>Module ${i + 1} — ${esc(x.titre)}</h3>
+    <button class="l" ${i ? '' : 'disabled'} onclick="moveSeq('${id}','${x.id}',-1)">↑ Monter</button><button class="l" ${i < r.sequences.length - 1 ? '' : 'disabled'} onclick="moveSeq('${id}','${x.id}',1)">↓ Descendre</button><button class="l" onclick="renameSeq('${id}','${x.id}')">Renommer</button><button class="l" onclick="delSeq('${id}','${x.id}')">Supprimer</button>
+    ${dzone(id, x.id, false, '📌 Documents à lire (obligatoires)', r.documents.filter(d => d.sequence === x.id && !d.facultatif))}${dzone(id, x.id, true, '📎 Ressources facultatives', r.documents.filter(d => d.sequence === x.id && d.facultatif))}
+    <label>🎭 Introduction racontée par Awa et Kofi (une réplique par ligne ; commencez par « Awa: » ou « Kofi: » pour choisir qui parle ; vide = introduction automatique)</label><textarea id="si_${x.id}" rows="4">${esc(x.intro)}</textarea><button class="s" onclick="saveIntro('${id}','${x.id}')">Enregistrer l’introduction</button>
+    <p class="mu">📝 Quiz : ${r.questions.filter(q => q.phase === 'Quiz' && q.sequence === x.id).length} question(s). Ajoutez-les dans « Questions » ci-dessous (choisir « Quiz — ${esc(x.titre)} »).</p></div>`).join('') || '<p class="mu">Aucune séquence pour le moment.</p>'}
+  <input id="sn" placeholder="Titre du nouveau module (ex. Présentation 2 : le prélèvement)"><button onclick="addSeq('${id}')">Ajouter un module</button></div>
+  <div class="card"><h3>Documents hors module</h3><p class="mu">Les documents obligatoires déposés ici forment une introduction lue avant le module 1. Les ressources facultatives sont consultables par tous dès le pré-test passé.</p>
+  ${dzone(id, '', false, '📌 Introduction (lecture obligatoire)', r.documents.filter(d => !d.sequence && !d.facultatif))}${dzone(id, '', true, '📎 Ressources générales (facultatives)', r.documents.filter(d => !d.sequence && d.facultatif))}
+  <h4>Ajouter un lien</h4><select id="dsq"><option value="">Hors module</option>${r.sequences.map((x, i) => `<option value="${x.id}">Module ${i + 1} — ${esc(x.titre)}</option>`).join('')}</select><input id="dt" placeholder="Titre du document"><input id="du" placeholder="Lien (Drive, YouTube, site…)"><label class="o"><input type="checkbox" id="dfac"> Facultatif (pas de lecture obligatoire)</label><button onclick="addDoc('${id}')">Ajouter le lien</button></div>
+  <div class="card"><h3>Questions (${r.questions.length})</h3><div style="max-height:220px;overflow:auto">${r.questions.map(q => row('Questions', q.id, `<span class="mu">${q.phase === 'Quiz' ? 'Quiz · ' + esc((r.sequences.filter(x => x.id === q.sequence)[0] || {}).titre || '?') : q.phase} · ${q.type}</span> ${esc(q.question).slice(0, 70)}`)).join('')}</div>
+  <select id="qp"><option value="Pré-test">Pré-test</option><option value="Post-test">Post-test</option>${r.sequences.map(x => `<option value="Quiz:${x.id}">Quiz — ${esc(x.titre)}</option>`).join('')}</select><textarea id="qq" rows="2" placeholder="Question"></textarea><textarea id="qo" rows="4" placeholder="Un choix par ligne"></textarea>
   <input id="qb" placeholder="Numéros des bonnes réponses, ex. 2 ou 1,3"><textarea id="qe" rows="2" placeholder="Explication (affichée après le test)"></textarea><button onclick="addQ('${id}')">Ajouter la question</button></div>
-  <div class="card"><h3>Importer des questions (fichier CSV)</h3><p class="mu">Colonnes : phase, type, question, options, bonnes, explication, donnees.</p>
+  <div class="card"><h3>Importer des questions (fichier CSV)</h3><p class="mu">Colonnes : phase (Pré-test, Post-test ou Quiz), sequence (pour les quiz : numéro du module, 1 = première, ou son titre), type, question, options, bonnes, explication, donnees.</p>
   <input id="qf" type="file" accept=".csv,.txt"><label class="o"><input type="checkbox" id="qr"> Remplacer les questions déjà présentes pour les phases du fichier</label><button onclick="importQ('${id}')">Importer le fichier</button></div>
   <div class="card"><button class="l" onclick="delCourse('${id}')">Supprimer tout ce cours</button></div>
-  <div class="card"><h3>Résultats (code de travail = pseudonyme)</h3>${r.resultats.length ? tbl(['Pseudonyme', 'Test', 'Score', 'Date'], r.resultats.map(x => [x.pseudo, x.phase, x.score + '/' + x.total, new Date(x.date).toLocaleDateString('fr-FR')])) : '<p class="mu">Aucun résultat.</p>'}</div>`);
+  <div class="card"><h3>Résultats (code de travail = pseudonyme)</h3><p class="mu">Cliquez sur une ligne pour voir, question par question, la réponse de l’utilisateur et la réponse correcte.</p>${r.resultats.length ? r.resultats.map(x => `<details style="border-bottom:1px solid var(--bd);padding:4px 0"><summary><b>${esc(x.pseudo)}</b> · ${x.phase === 'Quiz' ? 'Quiz — ' + esc((r.sequences.filter(q => q.id === x.sequence)[0] || {}).titre || '?') : x.phase} · ${x.score}/${x.total} <span class="mu">${new Date(x.date).toLocaleDateString('fr-FR')}</span></summary>${corrHtml(x.corrige) || '<p class="mu">Détail non enregistré (test passé avant la mise à jour).</p>'}</details>`).join('') : '<p class="mu">Aucun résultat.</p>'}</div>`);
 }
 function parseCSV(t) {
   t = t.replace(/^\uFEFF/, ''); const first = t.split('\n')[0];
@@ -287,34 +415,42 @@ async function importQ(id) {
 }
 async function addBloc(id) { const r = await api('adminAddBloc', adminPw, id, $('#bt').value, $('#bx').value); r.ok ? adminCourse(id) : alert(r.message); }
 const docRow = (d, id) => `<div class="msg" draggable="true" ondragstart="event.dataTransfer.setData('text/doc', '${d.id}')">⠿ 📄 ${esc(d.titre)} <button class="l" onclick="edit('Documents','${d.id}','${id}')">Modifier</button><button class="l" onclick="del('Documents','${d.id}','${id}')">Supprimer</button></div>`;
-const dzone = (id, fac, titre, list) => `<div class="dz" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="dzDrop(event,'${id}',${fac})">
+const dzone = (id, sid, fac, titre, list) => `<div class="dz" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="dzDrop(event,'${id}','${sid}',${fac})">
   <b>${titre}</b>${list.map(d => docRow(d, id)).join('') || '<p class="mu">Aucun document.</p>'}
-  <p class="mu">Déposez des fichiers ici, ou <label class="lk">choisissez-les<input type="file" multiple hidden onchange="uploadFiles('${id}',${fac},this.files)"></label>.</p><div class="mu" id="up${fac ? 1 : 0}"></div></div>`;
-async function dzDrop(e, id, fac) {
+  <p class="mu">Déposez des fichiers ici, ou <label class="lk">choisissez-les<input type="file" multiple hidden onchange="uploadFiles('${id}','${sid}',${fac},this.files)"></label>.</p><div class="mu" id="up_${sid || 'x'}_${fac ? 1 : 0}"></div></div>`;
+async function dzDrop(e, id, sid, fac) {
   e.preventDefault(); e.currentTarget.classList.remove('over');
   const files = e.dataTransfer.files, did = e.dataTransfer.getData('text/doc');
-  if (files && files.length) return uploadFiles(id, fac, files);
-  const g = did && admDet.documents.filter(x => x.id === did)[0]; if (!g || !!g.facultatif === fac) return;
-  const r = await api('adminUpdate', adminPw, 'Documents', did, { facultatif: fac }); r.ok ? adminCourse(id) : alert(r.message);
+  if (files && files.length) return uploadFiles(id, sid, fac, files);
+  const g = did && admDet.documents.filter(x => x.id === did)[0]; if (!g || (!!g.facultatif === fac && (g.sequence || '') === sid)) return;
+  const r = await api('adminUpdate', adminPw, 'Documents', did, { facultatif: fac, sequence: sid }); r.ok ? adminCourse(id) : alert(r.message);
 }
-/** Envoie plusieurs fichiers, l'un après l'autre, dans la catégorie choisie (fac = facultatif). */
-async function uploadFiles(id, fac, list) {
-  const files = [...list], log = $('#up' + (fac ? 1 : 0)), bad = []; let ok = 0;
+/** Envoie plusieurs fichiers, l'un après l'autre, dans le module et la catégorie choisies (fac = facultatif). */
+async function uploadFiles(id, sid, fac, list) {
+  const files = [...list], log = $('#up_' + (sid || 'x') + '_' + (fac ? 1 : 0)), bad = []; let ok = 0;
   for (let i = 0; i < files.length; i++) {
     const f = files[i]; log.textContent = `Envoi ${i + 1}/${files.length} : ${f.name}…`;
     if (f.size > 25 * 1024 * 1024) { bad.push(f.name + ' : plus de 25 Mo'); continue; }
     const b64 = await new Promise(res => { const x = new FileReader(); x.onload = () => res(x.result.split(',')[1]); x.readAsDataURL(f); });
-    const r = await api('adminAddDoc', adminPw, id, { titre: f.name.replace(/\.[^.]+$/, ''), facultatif: fac, fichier: { nom: f.name, mime: f.type || 'application/octet-stream', b64 } });
+    const r = await api('adminAddDoc', adminPw, id, { titre: f.name.replace(/\.[^.]+$/, ''), facultatif: fac, sequence: sid, fichier: { nom: f.name, mime: f.type || 'application/octet-stream', b64 } });
     r.ok ? ok++ : bad.push(f.name + ' : ' + r.message);
   }
   if (bad.length) alert(ok + ' document(s) ajouté(s).\n\nNon ajoutés :\n' + bad.join('\n'));
   adminCourse(id);
 }
+async function addSeq(id) { const r = await api('adminSaveSequence', adminPw, id, { titre: $('#sn').value }); r.ok ? adminCourse(id) : alert(r.message); }
+async function renameSeq(id, sid) { const g = admDet.sequences.filter(x => x.id === sid)[0], t = prompt('Titre du module :', g.titre); if (t === null) return; const r = await api('adminSaveSequence', adminPw, id, { id: sid, titre: t }); r.ok ? adminCourse(id) : alert(r.message); }
+async function saveIntro(id, sid) { const g = admDet.sequences.filter(x => x.id === sid)[0], r = await api('adminSaveSequence', adminPw, id, { id: sid, titre: g.titre, intro: $('#si_' + sid).value }); r.ok ? (alert('Introduction enregistrée.'), adminCourse(id)) : alert(r.message); }
+async function moveSeq(id, sid, d) { await api('adminMoveSequence', adminPw, id, sid, d); adminCourse(id); }
+async function delSeq(id, sid) {
+  if (!confirm('Supprimer ce module DÉFINITIVEMENT, avec ses documents, les questions de son quiz et les résultats de ce quiz ?')) return;
+  const r = await api('adminDeleteSequence', adminPw, id, sid); r.ok ? adminCourse(id) : alert(r.message);
+}
 async function addDoc(id) {
-  const r = await api('adminAddDoc', adminPw, id, { titre: $('#dt').value, url: $('#du').value, facultatif: $('#dfac').checked }); r.ok ? adminCourse(id) : alert(r.message);
+  const r = await api('adminAddDoc', adminPw, id, { titre: $('#dt').value, url: $('#du').value, facultatif: $('#dfac').checked, sequence: $('#dsq').value }); r.ok ? adminCourse(id) : alert(r.message);
 }
 async function addQ(id) {
-  const q = { phase: $('#qp').value, question: $('#qq').value, options: $('#qo').value.split('\n'), explication: $('#qe').value,
+  const pv = $('#qp').value.split(':'), q = { phase: pv[0], sequence: pv[1] || '', question: $('#qq').value, options: $('#qo').value.split('\n'), explication: $('#qe').value,
     bonnes: $('#qb').value.split(/[,;\s]+/).filter(Boolean).map(n => n - 1) };
   const r = await api('adminAddQuestion', adminPw, id, q); r.ok ? adminCourse(id) : alert(r.message);
 }

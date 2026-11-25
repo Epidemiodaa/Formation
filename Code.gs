@@ -12,25 +12,32 @@ const SHEET_ID = '1hZ7v3_5K2qhD5N4YRmt3C96OsxOIk0iuQdQUwYSrwQc';
 const TABS = {
   // Users : l'administrateur voit et modifie pseudo et motdepasse directement ici (id = identifiant stable, ne pas modifier)
   Users: ['id', 'pseudo', 'motdepasse', 'jeton', 'cree'],
-  Cours: ['id', 'titre', 'description', 'actif'],
+  // pretest : « obligatoire » (défaut, vide) ou « facultatif » (cours accessible sans pré-test) ; seuil : note de réussite des quiz en % (vide = 70, 0 = aucune exigence)
+  Cours: ['id', 'titre', 'description', 'actif', 'pretest', 'seuil'],
   // facultatif = TRUE : ressource complémentaire, consultable par tous les inscrits mais sans obligation de lecture
-  Documents: ['id', 'cours', 'titre', 'url', 'facultatif'],
+  // sequence = id de la séquence ; vide = document hors séquence
+  Documents: ['id', 'cours', 'titre', 'url', 'facultatif', 'sequence'],
   // options = JSON ["A","B"] ; bonnes = JSON [0] (index à partir de 0, plusieurs = choix multiple)
   // type : single | multi | chart | rpt | dates | match ; donnees = JSON (contexte, tableaux, dates, appariements)
-  Questions: ['id', 'cours', 'phase', 'type', 'question', 'options', 'bonnes', 'donnees', 'explication'],
+  Questions: ['id', 'cours', 'phase', 'type', 'question', 'options', 'bonnes', 'donnees', 'explication', 'sequence'], // phase « Quiz » : sequence = séquence concernée
   Blocs: ['id', 'cours', 'titre', 'texte'],
   Inscriptions: ['uid', 'pseudo', 'cours', 'date'],
-  Resultats: ['date', 'uid', 'pseudo', 'cours', 'phase', 'score', 'total'],
+  // details = JSON de la correction (réponse de l'utilisateur, bonnes réponses) ; sequence : pour les quiz
+  Resultats: ['date', 'uid', 'pseudo', 'cours', 'phase', 'score', 'total', 'sequence', 'details'],
   Messages: ['id', 'date', 'cours', 'uid', 'pseudo', 'texte'],
   // Lectures : une ligne par utilisateur et par document ; ouvert = date d'ouverture du lien, lu = date où l'utilisateur l'a marqué « lu en entier »
-  Lectures: ['uid', 'cours', 'doc', 'ouvert', 'lu']
+  Lectures: ['uid', 'cours', 'doc', 'ouvert', 'lu'],
+  // Sequences : un cours = suite ordonnée de séquences (documents puis quiz). ordre = 1, 2, 3…
+  // intro = texte de présentation dit par les personnages animés (une réplique par ligne, « Awa: » ou « Kofi: » pour choisir qui parle)
+  Sequences: ['id', 'cours', 'titre', 'ordre', 'intro']
 };
 const PHASES = ['Pré-test', 'Post-test'];
+const PHASES_ALL = PHASES.concat('Quiz'); // Quiz = quiz de fin de séquence
 
 const API = { login, me, profil, updateProfile, enroll, unenroll, course, openDoc, markDoc, startTest, submitTest,
   getMessages, postMessage, editMessage, deleteMessage,
   adminLogin, adminOverview, adminSaveCourse, adminAddDoc, adminAddQuestion,
-  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE: adminImporterMPE_, adminDeleteCourse, adminUpdate, adminImportQuestions };
+  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE: adminImporterMPE_, adminDeleteCourse, adminUpdate, adminImportQuestions, adminSaveSequence, adminMoveSequence, adminDeleteSequence };
 
 function doPost(e) {
   try {
@@ -139,30 +146,65 @@ function unenroll(tok, cid) {
     .forEach(i => sh_('Inscriptions').deleteRow(i._r));
   return { ok: true };
 }
-/** Verrous d'un cours pour un utilisateur : 1) pré-test avant les documents ; 2) tous les documents lus et marqués avant le post-test.
- *  Un cours sans question de pré-test n'impose pas ce verrou (sinon l'apprenant serait bloqué). */
+/** Parcours d'un cours pour un utilisateur : pré-test → séquences dans l'ordre (documents obligatoires lus et marqués, puis quiz) → post-test.
+ *  Documents sans séquence : les obligatoires forment une « introduction » avant la séquence 1 ; les facultatifs sont des ressources générales.
+ *  Un cours sans pré-test n'impose pas ce verrou ; une séquence sans document ni quiz s'ouvre et se termine d'elle-même. */
+const opt_ = d => d.facultatif === true || S(d.facultatif).toUpperCase() === 'TRUE';
 function lectures_(uid, cid) {
   const m = {}; rows_('Lectures').filter(l => S(l.uid) === S(uid) && S(l.cours) === S(cid)).forEach(l => m[S(l.doc)] = l); return m;
 }
-const opt_ = d => d.facultatif === true || S(d.facultatif).toUpperCase() === 'TRUE';
-function gates_(uid, cid) {
-  const preOk = !questions_(cid, 'Pré-test').length || done_(uid, cid, 'Pré-test');
-  const docs = rows_('Documents').filter(d => S(d.cours) === S(cid)), lec = lectures_(uid, cid), req = docs.filter(d => !opt_(d));
-  const lus = req.filter(d => lec[S(d.id)] && lec[S(d.id)].lu).length;
-  return { preOk, docs, req, lec, lus, tous: lus === req.length, postOk: preOk && lus === req.length };
+function seqs_(cid) {
+  return rows_('Sequences').filter(s => S(s.cours) === S(cid)).sort((a, b) => (Number(a.ordre) || 0) - (Number(b.ordre) || 0) || a._r - b._r);
 }
+/** Réglages d'un cours : pré-test facultatif ou non, note de réussite des quiz (%). */
+function cfg_(cid) {
+  const c = rows_('Cours').filter(x => S(x.id) === S(cid))[0] || {};
+  let seuil = S(c.seuil).trim() === '' ? 70 : Number(c.seuil); if (!(seuil >= 0)) seuil = 70;
+  return { pretestFac: S(c.pretest).trim().toLowerCase() === 'facultatif', seuil: Math.min(100, seuil) };
+}
+function plan_(uid, cid) {
+  const cf = cfg_(cid);
+  const preOk = cf.pretestFac || !questions_(cid, 'Pré-test').length || done_(uid, cid, 'Pré-test');
+  const real = seqs_(cid), ids = {}; real.forEach(s => ids[S(s.id)] = 1);
+  const docs = rows_('Documents').filter(d => S(d.cours) === S(cid)), lec = lectures_(uid, cid);
+  const libres = docs.filter(d => !ids[S(d.sequence)]);
+  const qs = rows_('Questions').filter(q => S(q.cours) === S(cid) && q.phase === 'Quiz');
+  const res = rows_('Resultats').filter(r => S(r.uid) === S(uid) && S(r.cours) === S(cid) && r.phase === 'Quiz');
+  const seqs = libres.some(d => !opt_(d)) ? [{ id: '', titre: 'Introduction', virtual: true }] : [];
+  real.forEach(x => seqs.push({ id: S(x.id), titre: x.titre, intro: S(x.intro) }));
+  let prev = true;
+  const list = seqs.map(x => {
+    const ds = x.virtual ? libres.filter(d => !opt_(d)) : docs.filter(d => S(d.sequence) === x.id);
+    const req = ds.filter(d => !opt_(d)), lus = req.filter(d => lec[S(d.id)] && lec[S(d.id)].lu).length;
+    const nq = x.virtual ? 0 : qs.filter(q => S(q.sequence) === x.id).length, att = res.filter(r => S(r.sequence) === x.id);
+    // Quiz : plusieurs essais possibles ; le module est terminé quand le meilleur essai atteint la note de réussite
+    const best = att.slice().sort((a, b) => b.score / b.total - a.score / a.total)[0] || null, last = att[att.length - 1] || null;
+    const passed = !!best && (cf.seuil <= 0 || (best.total > 0 && 100 * best.score / best.total >= cf.seuil));
+    const unlocked = preOk && prev, lu = lus === req.length, complete = unlocked && lu && (!nq || passed);
+    prev = complete;
+    return { id: x.id, titre: x.titre, intro: x.intro || '', virtual: !!x.virtual, docs: ds, req, lus, nq, att: att.length, best, last, passed, unlocked, lu, complete };
+  });
+  return { cf, preOk, list, lec, libres: libres.filter(opt_), postOk: preOk && prev };
+}
+function parseDetails_(r) { try { return r.details ? JSON.parse(r.details) : []; } catch (e) { return []; } }
 function course(tok, cid) {
   const u = auth_(tok), c = activeCourse_(cid); needEnrolled_(u, cid);
   const qs = rows_('Questions').filter(q => S(q.cours) === S(cid));
   const res = {};
-  rows_('Resultats').filter(r => S(r.uid) === S(u.id) && S(r.cours) === S(cid)).forEach(r => res[r.phase] = { score: r.score, total: r.total });
-  const g = gates_(u.id, cid);
+  rows_('Resultats').filter(r => S(r.uid) === S(u.id) && S(r.cours) === S(cid) && r.phase !== 'Quiz').forEach(r => res[r.phase] = { score: r.score, total: r.total, corrige: parseDetails_(r) });
+  const p = plan_(u.id, cid);
+  const dOut = d => { const l = p.lec[S(d.id)]; return { id: S(d.id), titre: d.titre, url: d.url, facultatif: opt_(d), ouvert: !!(l && l.ouvert), lu: !!(l && l.lu) }; };
   return { ok: true, id: S(c.id), titre: c.titre, description: c.description,
-    // Contenu du cours envoyé seulement une fois le pré-test passé
-    blocs: g.preOk ? rows_('Blocs').filter(b => S(b.cours) === S(cid)).map(b => ({ titre: b.titre, texte: b.texte })) : [],
-    documents: g.preOk ? g.docs.map(d => { const l = g.lec[S(d.id)]; return { id: S(d.id), titre: d.titre, url: d.url, facultatif: opt_(d), ouvert: !!(l && l.ouvert), lu: !!(l && l.lu) }; }) : [],
-    verrous: { docs: !g.preOk, post: !g.postOk, preManquant: !g.preOk, docsManquants: g.preOk ? g.req.length - g.lus : g.req.length },
-    lecture: { lus: g.lus, total: g.req.length },
+    // Contenu du cours envoyé seulement une fois le pré-test passé ; le contenu d'une séquence seulement quand elle est ouverte
+    blocs: p.preOk ? rows_('Blocs').filter(b => S(b.cours) === S(cid)).map(b => ({ titre: b.titre, texte: b.texte })) : [],
+    sequences: p.preOk ? p.list.map(s => ({ id: s.id, titre: s.titre, virtual: s.virtual, verrouille: !s.unlocked, complete: s.complete, lu: s.lu, lus: s.lus, total: s.req.length,
+      documents: s.unlocked ? s.docs.map(dOut) : [],
+      intro: s.unlocked ? s.intro : '',
+      quiz: s.nq ? { n: s.nq, seuil: p.cf.seuil, essais: s.att, reussi: s.passed, meilleur: s.best ? { score: s.best.score, total: s.best.total } : null,
+        dernier: s.last ? { score: s.last.score, total: s.last.total, corrige: parseDetails_(s.last) } : null } : null })) : [],
+    ressources: p.preOk ? p.libres.map(dOut) : [],
+    pretestFacultatif: p.cf.pretestFac, seuil: p.cf.seuil,
+    verrous: { docs: !p.preOk, post: !p.postOk, preManquant: !p.preOk, seqRestantes: p.list.filter(s => !s.complete).length, seqTotal: p.list.length },
     nbQuestions: { 'Pré-test': qs.filter(q => q.phase === 'Pré-test').length, 'Post-test': qs.filter(q => q.phase === 'Post-test').length },
     resultats: res };
 }
@@ -174,23 +216,25 @@ function lecture_(tok, cid, did, etape) {
   const u = auth_(tok); activeCourse_(cid); needEnrolled_(u, cid);
   const lock = LockService.getScriptLock(); lock.waitLock(10000);
   try {
-    if (!gates_(u.id, cid).preOk) return { ok: false, message: 'Passez d’abord le pré-test.' };
+    const p = plan_(u.id, cid);
+    if (!p.preOk) return { ok: false, message: 'Passez d’abord le pré-test.' };
     const doc = rows_('Documents').filter(d => S(d.id) === S(did) && S(d.cours) === S(cid))[0];
     if (!doc) return { ok: false, message: 'Document introuvable.' };
     if (opt_(doc)) return { ok: true, facultatif: true }; // ressource facultative : rien à enregistrer
+    const sq = p.list.filter(s => s.req.some(d => S(d.id) === S(did)))[0];
+    if (!sq || !sq.unlocked) return { ok: false, message: 'Terminez d’abord le module précédent.' };
     let l = lectures_(u.id, cid)[S(did)];
     if (!l) { add_('Lectures', { uid: u.id, cours: S(cid), doc: S(did), ouvert: etape === 'ouvert' ? new Date() : '', lu: '' }); l = lectures_(u.id, cid)[S(did)]; if (etape === 'ouvert') return { ok: true }; }
     if (etape === 'ouvert') { if (!l.ouvert) set_('Lectures', l._r, 'ouvert', new Date()); }
     else { if (!l.ouvert) return { ok: false, message: 'Ouvrez d’abord le document pour pouvoir le marquer comme lu.' }; if (!l.lu) set_('Lectures', l._r, 'lu', new Date()); }
-    const g = gates_(u.id, cid);
-    return { ok: true, lus: g.lus, total: g.req.length, postOk: g.postOk };
+    return { ok: true };
   } finally { lock.releaseLock(); }
 }
 
 /* ---------- Tests ---------- */
 function shuffle_(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
-function questions_(cid, phase) { return rows_('Questions').filter(q => S(q.cours) === S(cid) && q.phase === phase); }
-function done_(uid, cid, phase) { return rows_('Resultats').some(r => S(r.uid) === S(uid) && S(r.cours) === S(cid) && r.phase === phase); }
+function questions_(cid, phase, sid) { return rows_('Questions').filter(q => S(q.cours) === S(cid) && q.phase === phase && (phase !== 'Quiz' || S(q.sequence) === S(sid))); }
+function done_(uid, cid, phase, sid) { return rows_('Resultats').some(r => S(r.uid) === S(uid) && S(r.cours) === S(cid) && r.phase === phase && (phase !== 'Quiz' || S(r.sequence) === S(sid))); }
 
 function typeOf_(q) { return q.type || (JSON.parse(q.bonnes).length > 1 ? 'multi' : 'single'); }
 function dat_(q) { return q.donnees ? JSON.parse(q.donnees) : {}; }
@@ -219,34 +263,54 @@ function bonnes_(q) {
   if (t === 'rpt') return [];
   return JSON.parse(q.bonnes).map(i => { const x = JSON.parse(q.options)[i]; return typeof x === 'string' ? x : x.t; });
 }
-/** Raison pour laquelle le post-test est fermé (chaîne vide = accessible). */
-function postBlock_(uid, cid) {
-  const g = gates_(uid, cid);
-  if (!g.preOk) return 'Passez d’abord le pré-test.';
-  if (!g.tous) return 'Lisez et marquez tous les documents du cours (' + g.lus + '/' + g.req.length + ') avant le post-test.';
+/** Raison pour laquelle un test est fermé (chaîne vide = accessible). */
+function testBlock_(uid, cid, phase, sid) {
+  if (phase === 'Pré-test') return '';
+  const p = plan_(uid, cid);
+  if (!p.preOk) return 'Passez d’abord le pré-test.';
+  if (phase === 'Post-test') return p.postOk ? '' : 'Terminez tous les modules du cours (documents lus et quiz réussi) avant le post-test.';
+  const s = p.list.filter(x => x.id === S(sid) && !x.virtual)[0];
+  if (!s) return 'Module introuvable.';
+  if (!s.unlocked) return 'Terminez d’abord le module précédent.';
+  if (s.passed) return 'Vous avez déjà réussi ce quiz.';
+  if (!s.lu) return 'Lisez et marquez tous les documents de ce module (' + s.lus + '/' + s.req.length + ') avant le quiz.';
   return '';
 }
-function startTest(tok, cid, phase) {
+function optTxt_(x, i) { return typeof x === 'string' ? x : (x && x.t) || ('Option ' + (i + 1)); }
+/** Réponse de l'utilisateur sous forme de textes lisibles (pour la correction). */
+function repTexte_(q, rep) {
+  const t = typeOf_(q), d = dat_(q), vide = v => v === undefined || v === null || v === '';
+  if (t === 'dates') return d.dates.map(x => x.label + ' : ' + (rep && !vide(rep[x.k]) ? x.o[Number(rep[x.k])] : '—'));
+  if (t === 'match') return d.rows.map((r, i) => { const a = (Array.isArray(rep) && rep[i]) || []; return r.label + ' : ' + (vide(a[0]) ? '—' : d.pre[a[0]]) + ' → ' + (vide(a[1]) ? '—' : d.tubes[a[1]].t); });
+  const o = JSON.parse(q.options || '[]');
+  return (Array.isArray(rep) ? rep : []).map(Number).sort((x, y) => x - y).map(i => optTxt_(o[i], i));
+}
+function startTest(tok, cid, phase, sid) {
   const u = auth_(tok); activeCourse_(cid); needEnrolled_(u, cid);
-  if (PHASES.indexOf(phase) < 0) return { ok: false, message: 'Phase inconnue.' };
-  if (done_(u.id, cid, phase)) return { ok: false, message: 'Vous avez déjà passé ce test.' };
-  if (phase === 'Post-test') { const e = postBlock_(u.id, cid); if (e) return { ok: false, message: e }; }
-  const qs = questions_(cid, phase);
+  if (PHASES_ALL.indexOf(phase) < 0) return { ok: false, message: 'Phase inconnue.' };
+  if (phase !== 'Quiz' && done_(u.id, cid, phase, sid)) return { ok: false, message: 'Vous avez déjà passé ce test.' };
+  const e = testBlock_(u.id, cid, phase, sid); if (e) return { ok: false, message: e };
+  const qs = questions_(cid, phase, sid);
   if (!qs.length) return { ok: false, message: 'Aucune question n’a encore été ajoutée.' };
-  return { ok: true, pseudo: S(u.pseudo), limitSec: 25 * 60, questions: shuffle_(qs.map(qOut_)) };
+  return { ok: true, pseudo: S(u.pseudo), limitSec: (phase === 'Quiz' ? 15 : 25) * 60, questions: shuffle_(qs.map(qOut_)) };
 }
 /** reponses : { idQuestion: réponse } — les questions non renseignées comptent comme fausses. */
-function submitTest(tok, cid, phase, reponses) {
+function submitTest(tok, cid, phase, reponses, sid) {
   const u = auth_(tok); needEnrolled_(u, cid);
-  if (done_(u.id, cid, phase)) return { ok: false, message: 'Vous avez déjà passé ce test.' };
-  if (phase === 'Post-test') { const e = postBlock_(u.id, cid); if (e) return { ok: false, message: e }; }
-  const qs = questions_(cid, phase); let score = 0;
+  if (PHASES_ALL.indexOf(phase) < 0) return { ok: false, message: 'Phase inconnue.' };
+  if (phase !== 'Quiz' && done_(u.id, cid, phase, sid)) return { ok: false, message: 'Vous avez déjà passé ce test.' };
+  const e = testBlock_(u.id, cid, phase, sid); if (e) return { ok: false, message: e };
+  const qs = questions_(cid, phase, sid); let score = 0;
   const corr = qs.map(q => {
-    const ok = grade_(q, (reponses || {})[S(q.id)]); if (ok) score++;
-    return { q: q.question, ok, bonnes: bonnes_(q), explication: q.explication };
+    const rep = (reponses || {})[S(q.id)], ok = grade_(q, rep); if (ok) score++;
+    let r = []; try { r = repTexte_(q, rep); } catch (x) { }
+    return { q: q.question, ok, rep: r, bonnes: bonnes_(q), explication: q.explication };
   });
-  add_('Resultats', { date: new Date(), uid: u.id, pseudo: u.pseudo, cours: S(cid), phase, score, total: qs.length });
-  return { ok: true, pseudo: S(u.pseudo), score, total: qs.length, corrige: corr };
+  let det = JSON.stringify(corr);
+  if (det.length > 45000) det = JSON.stringify(corr.map(c => ({ q: c.q, ok: c.ok, rep: c.rep, bonnes: c.bonnes }))); // limite d'une cellule Sheets
+  add_('Resultats', { date: new Date(), uid: u.id, pseudo: u.pseudo, cours: S(cid), phase, score, total: qs.length, sequence: phase === 'Quiz' ? S(sid) : '', details: det });
+  const seuil = cfg_(cid).seuil, reussi = phase === 'Quiz' ? (seuil <= 0 || (qs.length > 0 && 100 * score / qs.length >= seuil)) : null;
+  return { ok: true, pseudo: S(u.pseudo), score, total: qs.length, corrige: corr, reussi, seuil };
 }
 
 /* ---------- Discussion ---------- */
@@ -291,10 +355,14 @@ function adminSaveCourse(pw, c) {
   const titre = S(c && c.titre).trim().slice(0, 120); if (!titre) return { ok: false, message: 'Titre requis.' };
   const desc = S(c.description || '').slice(0, 500);
   const ex = c.id && rows_('Cours').filter(x => S(x.id) === S(c.id))[0];
-  if (ex) { set_('Cours', ex._r, 'titre', titre); set_('Cours', ex._r, 'description', desc); set_('Cours', ex._r, 'actif', c.actif !== false); return { ok: true, id: S(c.id) }; }
-  const id = id_('c'); add_('Cours', { id, titre, description: desc, actif: true }); return { ok: true, id };
+  const pre = c.pretest === 'facultatif' ? 'facultatif' : 'obligatoire', sc = S(c.seuil === undefined ? '' : c.seuil).trim(), seuil = sc === '' ? '' : Math.max(0, Math.min(100, Number(sc) || 0));
+  if (ex) { set_('Cours', ex._r, 'titre', titre); set_('Cours', ex._r, 'description', desc); set_('Cours', ex._r, 'actif', c.actif !== false);
+    if (c.pretest !== undefined) set_('Cours', ex._r, 'pretest', pre); if (c.seuil !== undefined) set_('Cours', ex._r, 'seuil', seuil); return { ok: true, id: S(c.id) }; }
+  const id = id_('c'); add_('Cours', { id, titre, description: desc, actif: true, pretest: pre, seuil }); return { ok: true, id };
 }
 /** doc : { titre, url } ou { titre, fichier: { nom, mime, b64 } } (déposé dans Drive, lisible par lien). */
+/** Identifiant de séquence valide du cours, sinon chaîne vide (hors séquence). */
+function seqOk_(cid, sid) { return seqs_(cid).some(x => S(x.id) === S(sid)) ? S(sid) : ''; }
 function adminAddDoc(pw, cid, doc) {
   admin_(pw); activeCourse_(cid);
   let url = S(doc.url || '').trim();
@@ -303,15 +371,16 @@ function adminAddDoc(pw, cid, doc) {
     f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); url = f.getUrl();
   }
   if (!url) return { ok: false, message: 'Indiquez un lien ou un fichier.' };
-  add_('Documents', { id: id_('d'), cours: S(cid), titre: S(doc.titre || (doc.fichier && doc.fichier.nom) || 'Document').slice(0, 120), url, facultatif: doc.facultatif === true });
+  add_('Documents', { id: id_('d'), cours: S(cid), titre: S(doc.titre || (doc.fichier && doc.fichier.nom) || 'Document').slice(0, 120), url, facultatif: doc.facultatif === true, sequence: seqOk_(cid, doc.sequence) });
   return { ok: true };
 }
 function adminAddQuestion(pw, cid, q) {
   admin_(pw); activeCourse_(cid);
   const opts = (q.options || []).map(x => S(x).trim()).filter(Boolean);
   const bonnes = (q.bonnes || []).map(Number).filter(i => i >= 0 && i < opts.length);
-  if (PHASES.indexOf(q.phase) < 0 || !S(q.question).trim() || opts.length < 2 || !bonnes.length) return { ok: false, message: 'Question, au moins 2 choix et une bonne réponse requis.' };
-  add_('Questions', { id: id_('q'), cours: S(cid), phase: q.phase, type: bonnes.length > 1 ? 'multi' : 'single', question: S(q.question).trim(), options: JSON.stringify(opts), bonnes: JSON.stringify(bonnes), donnees: '{}', explication: S(q.explication || '') });
+  if (PHASES_ALL.indexOf(q.phase) < 0 || !S(q.question).trim() || opts.length < 2 || !bonnes.length) return { ok: false, message: 'Question, au moins 2 choix et une bonne réponse requis.' };
+  const sq = q.phase === 'Quiz' ? seqOk_(cid, q.sequence) : ''; if (q.phase === 'Quiz' && !sq) return { ok: false, message: 'Choisissez le module du quiz.' };
+  add_('Questions', { id: id_('q'), cours: S(cid), phase: q.phase, type: bonnes.length > 1 ? 'multi' : 'single', question: S(q.question).trim(), options: JSON.stringify(opts), bonnes: JSON.stringify(bonnes), donnees: '{}', explication: S(q.explication || ''), sequence: sq });
   return { ok: true };
 }
 /** Page d'administration d'un cours : tout son contenu et les résultats (pseudonyme = code de travail). */
@@ -320,11 +389,12 @@ function adminCourseDetail(pw, cid) {
   const c = rows_('Cours').filter(x => S(x.id) === S(cid))[0]; if (!c) return { ok: false, message: 'Cours introuvable.' };
   const mine = r => S(r.cours) === S(cid);
   return { ok: true,
-    cours: { id: S(c.id), titre: c.titre, description: c.description, actif: !(c.actif === false || S(c.actif).toUpperCase() === 'FALSE') },
-    documents: rows_('Documents').filter(mine).map(d => ({ id: S(d.id), titre: d.titre, url: d.url, facultatif: opt_(d) })),
+    cours: { id: S(c.id), titre: c.titre, description: c.description, actif: !(c.actif === false || S(c.actif).toUpperCase() === 'FALSE'), pretest: cfg_(cid).pretestFac ? 'facultatif' : 'obligatoire', seuil: cfg_(cid).seuil },
+    sequences: seqs_(cid).map(x => ({ id: S(x.id), titre: x.titre, intro: S(x.intro) })),
+    documents: rows_('Documents').filter(mine).map(d => ({ id: S(d.id), titre: d.titre, url: d.url, facultatif: opt_(d), sequence: seqOk_(cid, d.sequence) })),
     blocs: rows_('Blocs').filter(mine).map(b => ({ id: S(b.id), titre: b.titre, texte: b.texte })),
-    questions: rows_('Questions').filter(mine).map(q => ({ id: S(q.id), phase: q.phase, type: typeOf_(q), question: q.question, explication: q.explication })),
-    resultats: rows_('Resultats').filter(mine).map(r => ({ pseudo: r.pseudo, phase: r.phase, score: r.score, total: r.total, date: r.date })) };
+    questions: rows_('Questions').filter(mine).map(q => ({ id: S(q.id), phase: q.phase, sequence: S(q.sequence), type: typeOf_(q), question: q.question, explication: q.explication })),
+    resultats: rows_('Resultats').filter(mine).map(r => ({ pseudo: r.pseudo, phase: r.phase, sequence: S(r.sequence), score: r.score, total: r.total, date: r.date, corrige: parseDetails_(r) })) };
 }
 function adminDelete(pw, table, id) {
   admin_(pw);
@@ -349,7 +419,7 @@ function adminImporterMPE_(pw) {
 function adminDeleteCourse(pw, cid) {
   admin_(pw);
   const n = {};
-  ['Documents', 'Blocs', 'Questions', 'Inscriptions', 'Resultats', 'Messages', 'Lectures'].forEach(t => {
+  ['Documents', 'Blocs', 'Questions', 'Inscriptions', 'Resultats', 'Messages', 'Lectures', 'Sequences'].forEach(t => {
     const r = rows_(t).filter(x => S(x.cours) === S(cid)).reverse(); r.forEach(x => sh_(t).deleteRow(x._r)); n[t] = r.length;
   });
   const c = rows_('Cours').filter(x => S(x.id) === S(cid))[0];
@@ -360,12 +430,13 @@ function adminDeleteCourse(pw, cid) {
 /** Modifie un élément d'un cours : document (titre, url), texte (titre, texte), question (question, explication, phase). */
 function adminUpdate(pw, table, id, champs) {
   admin_(pw);
-  const ok = { Documents: ['titre', 'url', 'facultatif'], Blocs: ['titre', 'texte'], Questions: ['question', 'explication', 'phase'] }[table];
+  const ok = { Documents: ['titre', 'url', 'facultatif', 'sequence'], Blocs: ['titre', 'texte'], Questions: ['question', 'explication', 'phase'] }[table];
   if (!ok) return { ok: false, message: 'Table non autorisée.' };
   const r = rows_(table).filter(x => S(x.id) === S(id))[0]; if (!r) return { ok: false, message: 'Élément introuvable.' };
   for (const k of Object.keys(champs || {})) {
     if (ok.indexOf(k) < 0) continue;
     if (k === 'facultatif') { set_(table, r._r, k, champs[k] === true || S(champs[k]).toLowerCase() === 'true'); continue; }
+    if (k === 'sequence') { set_(table, r._r, k, seqOk_(r.cours, champs[k])); continue; }
     const v = S(champs[k]).trim();
     if (k === 'phase' && PHASES.indexOf(v) < 0) return { ok: false, message: 'Phase inconnue.' };
     if ((k === 'titre' && table !== 'Blocs') || k === 'question' || k === 'url' || k === 'texte') { if (!v) return { ok: false, message: 'Champ « ' + k + ' » vide.' }; }
@@ -380,7 +451,8 @@ function adminImportQuestions(pw, cid, lignes, remplacer) {
   (lignes || []).forEach((l, i) => {
     try {
       const phase = S(l.phase).trim(), type = S(l.type || '').trim() || 'single', question = S(l.question).trim();
-      if (PHASES.indexOf(phase) < 0) throw new Error('phase inconnue (« Pré-test » ou « Post-test »)');
+      if (PHASES_ALL.indexOf(phase) < 0) throw new Error('phase inconnue (« Pré-test », « Post-test » ou « Quiz »)');
+      let sq = ''; if (phase === 'Quiz') { sq = seqRef_(cid, l.sequence); if (!sq) throw new Error('quiz : colonne « sequence » (numéro ou titre de la séquence) manquante ou inconnue'); }
       if (TYPES.indexOf(type) < 0) throw new Error('type inconnu');
       if (!question) throw new Error('question vide');
       const o = S(l.options || '').trim();
@@ -394,14 +466,49 @@ function adminImportQuestions(pw, cid, lignes, remplacer) {
         if (!bonnes.length || bonnes.some(b => !(b >= 0 && b < options.length))) throw new Error('numéros de bonnes réponses invalides');
         if (type !== 'multi' && bonnes.length !== 1) throw new Error('une seule bonne réponse attendue');
       }
-      bons.push({ phase, type, question, options, bonnes: (type === 'dates' || type === 'match') ? [] : bonnes, donnees: d, explication: S(l.explication || '') });
+      bons.push({ phase, sequence: sq, type, question, options, bonnes: (type === 'dates' || type === 'match') ? [] : bonnes, donnees: d, explication: S(l.explication || '') });
     } catch (e) { err.push('Ligne ' + (i + 2) + ' : ' + e.message); }
   });
   if (remplacer && bons.length) {
-    const ph = {}; bons.forEach(b => ph[b.phase] = 1);
-    rows_('Questions').filter(q => S(q.cours) === S(cid) && ph[q.phase]).reverse().forEach(q => sh_('Questions').deleteRow(q._r));
+    const ph = {}; bons.forEach(b => ph[b.phase === 'Quiz' ? 'Quiz:' + b.sequence : b.phase] = 1);
+    rows_('Questions').filter(q => S(q.cours) === S(cid) && ph[q.phase === 'Quiz' ? 'Quiz:' + S(q.sequence) : q.phase]).reverse().forEach(q => sh_('Questions').deleteRow(q._r));
   }
   bons.forEach(b => add_('Questions', { id: id_('q'), cours: S(cid), phase: b.phase, type: b.type, question: b.question,
-    options: JSON.stringify(b.options), bonnes: JSON.stringify(b.bonnes), donnees: JSON.stringify(b.donnees), explication: b.explication }));
+    options: JSON.stringify(b.options), bonnes: JSON.stringify(b.bonnes), donnees: JSON.stringify(b.donnees), explication: b.explication, sequence: b.sequence }));
   return { ok: true, ajoutees: bons.length, erreurs: err };
+}
+
+/** Séquence désignée par un numéro (1 = première), un titre ou un identifiant ; chaîne vide si inconnue. */
+function seqRef_(cid, ref) {
+  ref = S(ref || '').trim(); if (!ref) return '';
+  const l = seqs_(cid), n = Number(ref), x = (n >= 1 && l[n - 1]) || l.filter(y => S(y.id) === ref || S(y.titre).trim().toLowerCase() === ref.toLowerCase())[0];
+  return x ? S(x.id) : '';
+}
+/* ---------- Séquences (administration) ---------- */
+/** Crée une séquence (c = { titre }) ou la renomme (c = { id, titre }). Ajoutée à la fin du cours. */
+function adminSaveSequence(pw, cid, c) {
+  admin_(pw); activeCourse_(cid);
+  const titre = S(c && c.titre).trim().slice(0, 120); if (!titre) return { ok: false, message: 'Titre requis.' };
+  const ex = c.id && seqs_(cid).filter(x => S(x.id) === S(c.id))[0];
+  const intro = S(c.intro || '').slice(0, 2000);
+  if (ex) { set_('Sequences', ex._r, 'titre', titre); if (c.intro !== undefined) set_('Sequences', ex._r, 'intro', intro); return { ok: true, id: S(ex.id) }; }
+  const id = id_('s'); add_('Sequences', { id, cours: S(cid), titre, ordre: seqs_(cid).length + 1, intro }); return { ok: true, id };
+}
+/** Déplace une séquence vers le haut (delta = -1) ou vers le bas (+1). */
+function adminMoveSequence(pw, cid, sid, delta) {
+  admin_(pw);
+  const l = seqs_(cid), i = l.findIndex(x => S(x.id) === S(sid)), j = i + Number(delta);
+  if (i < 0 || j < 0 || j >= l.length) return { ok: true };
+  const t = l[i]; l[i] = l[j]; l[j] = t;
+  l.forEach((x, k) => set_('Sequences', x._r, 'ordre', k + 1));
+  return { ok: true };
+}
+/** Supprime une séquence avec ses documents, ses questions de quiz et les résultats de ce quiz. */
+function adminDeleteSequence(pw, cid, sid) {
+  admin_(pw);
+  const x = seqs_(cid).filter(y => S(y.id) === S(sid))[0]; if (!x) return { ok: false, message: 'Module introuvable.' };
+  [['Documents', r => true], ['Questions', r => r.phase === 'Quiz'], ['Resultats', r => r.phase === 'Quiz']].forEach(t =>
+    rows_(t[0]).filter(r => S(r.cours) === S(cid) && S(r.sequence) === S(sid) && t[1](r)).reverse().forEach(r => sh_(t[0]).deleteRow(r._r)));
+  sh_('Sequences').deleteRow(x._r);
+  return { ok: true };
 }

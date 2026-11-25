@@ -32,6 +32,14 @@ input,textarea,select{width:100%;padding:8px;margin:4px 0 10px;border:1px solid 
 .msg{padding:6px 0;border-bottom:1px solid var(--bd)}.msg.me{background:rgba(11,110,79,.07)}
 table{border-collapse:collapse;font-size:.9em;margin:6px 0}th,td{border:1px solid var(--bd);padding:3px 7px;text-align:center}select{width:auto;max-width:100%;margin:4px 4px 4px 0}
 .dz{border:2px dashed var(--bd);border-radius:10px;padding:10px;margin:10px 0}.dz.over{border-color:var(--pr);background:rgba(11,110,79,.08)}.dz .msg[draggable=true]{cursor:grab}.lk{color:var(--pr);text-decoration:underline;cursor:pointer}
+/* Image de couverture des cours + notifications */
+.card.hc{overflow:hidden}.cov{position:relative;aspect-ratio:16/7;background:#0b6e4f;cursor:pointer;margin:-14px -14px 10px;overflow:hidden}.cov.big{margin:0 0 10px;border-radius:10px;cursor:default;aspect-ratio:16/6}
+.cov img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .3s}.cov:hover img{transform:scale(1.03)}.cov.big:hover img{transform:none}
+.cov .cap{position:absolute;left:0;right:0;bottom:0;padding:28px 14px 10px;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.72))}.cov .cap h2,.cov .cap b{margin:0;color:#fff;font-size:1.15em}
+.tag{display:inline-block;background:#f5b83d;color:#3a2a00;border-radius:999px;font-size:.75em;font-weight:700;padding:1px 8px;margin-left:6px;vertical-align:middle}
+.bdg{display:inline-block;background:var(--er);color:#fff;border-radius:999px;font-size:.75em;padding:0 7px;margin-left:4px}
+#toast{position:fixed;left:50%;transform:translateX(-50%);top:max(10px,env(safe-area-inset-top));z-index:30;width:min(92vw,420px);display:flex;flex-direction:column;gap:8px}
+#toast div{background:var(--card);border:1px solid var(--pr);border-left-width:5px;border-radius:10px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.25);cursor:pointer}
 /* Personnages animés (introduction des modules) */
 .stage{background:linear-gradient(#e6f5ee,var(--card));border:1px solid var(--bd);border-radius:12px;padding:12px;margin:10px 0}
 .chars{display:flex;justify-content:space-around;align-items:flex-end}
@@ -54,13 +62,13 @@ label.o{display:block;padding:6px 8px;border:1px solid var(--bd);border-radius:8
 </head>
 <body>
 <header><b>Plateforme de formation</b><span><button id="inst" class="s" style="display:none" onclick="installApp()">📲 Installer</button><span id="nav"></span></span></header>
-<main id="app"></main>
+<main id="app"></main><div id="toast" aria-live="polite"></div>
 <script>
 // >>> Coller ici l'URL /exec du déploiement Apps Script <<<
 const API_URL = 'https://script.google.com/macros/s/AKfycbzmylSAU7ocsFHMVDGNaO2jladI_obqWVw8m-4pkVr4R1gVxmZU8kRQjwqSfczdIVEE/exec';
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let tmr = null, typ = null;
+let tmr = null, typ = null, chatOpen = null, unread = {}, since = Number(localStorage.getItem('since')) || 0, pollT = null;
 let tok = localStorage.getItem('tok'), pseudo = localStorage.getItem('pseudo'), adminPw = null, timer = null, cur = null;
 
 async function api(action, ...args) {
@@ -73,12 +81,12 @@ async function api(action, ...args) {
   try { return JSON.parse(txt); }
   catch (e) { return { ok: false, message: 'Le serveur a répondu autre chose que des données (autorisation ou déploiement à refaire : exécutez setup() dans Apps Script, puis redéployez en « Nouvelle version »).' }; }
 }
-function view(html) { clearInterval(timer); clearInterval(tmr); clearInterval(typ); $('#app').innerHTML = html; window.scrollTo(0, 0); }
+function view(html) { chatOpen = null; clearInterval(timer); clearInterval(tmr); clearInterval(typ); $('#app').innerHTML = html; window.scrollTo(0, 0); }
 function nav() {
-  $('#nav').innerHTML = tok ? `<button class="l" onclick="home()">Mes cours</button><button class="l" onclick="profile()">${esc(pseudo)}</button><button class="l" onclick="logout()">Quitter</button>` : `<button class="l" onclick="admin()">Admin</button>`;
+  $('#nav').innerHTML = tok ? `${'Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied' ? '<button class="l" onclick="askNotif()" title="Être prévenu des nouveaux messages et cours">🔔 Activer les alertes</button>' : ''}<button class="l" onclick="home()">Mes cours</button><button class="l" onclick="profile()">${esc(pseudo)}</button><button class="l" onclick="logout()">Quitter</button>` : `<button class="l" onclick="admin()">Admin</button>`;
 }
-function setSession(r) { tok = r.token; pseudo = r.pseudo; localStorage.setItem('tok', tok); localStorage.setItem('pseudo', pseudo); }
-function logout() { tok = null; localStorage.clear(); auth(); }
+function setSession(r) { tok = r.token; pseudo = r.pseudo; localStorage.setItem('tok', tok); localStorage.setItem('pseudo', pseudo); startPolling(); }
+function logout() { tok = null; stopPolling(); localStorage.clear(); auth(); }
 function fail(r) { if (/Session expirée/.test(r.message || '')) return logout(); alert(r.message || 'Erreur'); }
 
 /* ---------- Connexion / inscription ---------- */
@@ -98,11 +106,12 @@ async function doAuth() {
 async function home() {
   if (!tok) return auth(); nav(); view('<p class="mu">Chargement…</p>');
   const r = await api('me', tok); if (!r.ok) return fail(r);
-  const item = c => `<div class="card"><b>${esc(c.titre)}</b><p class="mu">${esc(c.description)}</p>${c.inscrit
-    ? `<button onclick="openCourse('${c.id}')">Ouvrir</button> <button class="l" onclick="leave('${c.id}')">Me désinscrire</button>`
+  const cover = c => c.image ? `<div class="cov" role="button" tabindex="0" title="${c.inscrit ? 'Ouvrir le cours' : 'S’inscrire et ouvrir le cours'}" onclick="${c.inscrit ? `openCourse('${c.id}')` : `join('${c.id}')`}"><img src="${esc(c.image)}" alt="" loading="lazy"><div class="cap"><b>${esc(c.titre)}</b>${c.nouveau ? '<span class="tag">Nouveau</span>' : ''}</div></div>` : '';
+  const item = c => `<div class="card ${c.image ? 'hc' : ''}">${cover(c)}${c.image ? '' : `<b>${esc(c.titre)}</b>${c.nouveau ? '<span class="tag">Nouveau</span>' : ''}`}<p class="mu">${esc(c.description)}</p>${c.inscrit
+    ? `<button data-open="${c.id}" onclick="openCourse('${c.id}')">Ouvrir${unread[c.id] ? `<span class="bdg">💬 ${unread[c.id]}</span>` : ''}</button> <button class="l" onclick="leave('${c.id}')">Me désinscrire</button>`
     : `<button class="s" onclick="join('${c.id}')">S’inscrire</button>`}</div>`;
   const mine = r.cours.filter(c => c.inscrit), other = r.cours.filter(c => !c.inscrit);
-  view(`<h2>Mes cours</h2>${mine.map(item).join('') || '<p class="mu">Vous n’êtes inscrit à aucun cours.</p>'}<h2>Cours disponibles</h2>${other.map(item).join('') || '<p class="mu">Aucun autre cours.</p>'}`);
+  view(`<h2 data-home>Mes cours</h2>${mine.map(item).join('') || '<p class="mu">Vous n’êtes inscrit à aucun cours.</p>'}<h2>Cours disponibles</h2>${other.map(item).join('') || '<p class="mu">Aucun autre cours.</p>'}`);
 }
 async function join(id) { const r = await api('enroll', tok, id); r.ok ? openCourse(id) : fail(r); }
 async function leave(id) { if (confirm('Se désinscrire de ce cours ?')) { await api('unenroll', tok, id); home(); } }
@@ -129,8 +138,8 @@ async function openCourse(id, tab) {
   const r = await api('course', tok, id); if (!r.ok) { fail(r); return home(); }
   cur = r; tab = tab || (r.verrous.docs ? 'Pré-test' : 'docs');
   const T = [['docs', 'Cours'], ['Pré-test', 'Pré-test'], ['Post-test', 'Post-test'], ['chat', 'Discussion']], base = tab.indexOf('quiz:') === 0 ? 'docs' : tab;
-  view(`<h2>${esc(r.titre)}</h2><p class="mu">${esc(r.description)}</p>
-  <div class="tabs">${T.map(t => `<button class="${t[0] === base ? 'on' : ''}" onclick="openCourse('${id}','${t[0]}')">${lockOf(t[0]) ? '🔒 ' : ''}${t[1]}</button>`).join('')}</div><div id="tab"></div>`);
+  view(`${r.image ? `<div class="cov big"><img src="${esc(r.image)}" alt=""><div class="cap"><h2>${esc(r.titre)}</h2></div></div>` : `<h2>${esc(r.titre)}</h2>`}<p class="mu">${esc(r.description)}</p>
+  <div class="tabs">${T.map(t => `<button class="${t[0] === base ? 'on' : ''}" onclick="openCourse('${id}','${t[0]}')">${lockOf(t[0]) ? '🔒 ' : ''}${t[1]}${t[0] === 'chat' && unread[id] ? `<span class="bdg" id="chatbdg">${unread[id]}</span>` : ''}</button>`).join('')}</div><div id="tab"></div>`);
   if (tab === 'docs') docsTab(id);
   else if (base !== tab) quizHome(id, tab.slice(5));
   else if (tab === 'chat') chat(id);
@@ -327,6 +336,7 @@ async function sendTest() {
 
 /* ---------- Discussion ---------- */
 async function chat(id) {
+  chatOpen = id; delete unread[id]; const bd = $('#chatbdg'); if (bd) bd.remove();
   $('#tab').innerHTML = `<div id="ms"></div><textarea id="tx" rows="2" placeholder="Votre message…" maxlength="1000"></textarea><button onclick="send('${id}')">Envoyer</button>`;
   const load = async () => {
     const r = await api('getMessages', tok, id); if (!r.ok || !$('#ms')) return;
@@ -379,6 +389,9 @@ async function adminCourse(id) {
   view(`<button class="s" onclick="adminHome()">← Retour</button><h2>${esc(c.titre)}</h2>
   <div class="card"><h3>Informations du cours</h3><input id="ct" value="${esc(c.titre)}"><textarea id="cd" rows="3" placeholder="Description">${esc(c.description)}</textarea>
   <label class="o"><input type="checkbox" id="ca" ${c.actif ? 'checked' : ''}> Cours visible par les utilisateurs</label>
+  <label>Image de présentation du cours (affichée à la place du simple titre ; un clic dessus ouvre le cours)</label>
+  ${c.image ? `<div class="cov big"><img src="${esc(c.image)}" alt=""></div>` : '<p class="mu">Aucune image pour le moment.</p>'}
+  <input id="cimg" type="file" accept="image/*"><input id="cimu" placeholder="… ou lien d’une image (https://…)"><button class="s" onclick="saveImage('${id}')">Enregistrer l’image</button>${c.image ? ' <button class="l" onclick="saveImage(\'' + id + '\',true)">Retirer l’image</button>' : ''}
   <label>Pré-test</label><select id="cpre"><option value="obligatoire" ${c.pretest === 'facultatif' ? '' : 'selected'}>Obligatoire avant d’accéder au cours</option><option value="facultatif" ${c.pretest === 'facultatif' ? 'selected' : ''}>Facultatif : le cours est accessible tout de suite</option></select>
   <label>Note de réussite des quiz (%) — le module suivant ne s’ouvre qu’après un quiz réussi ; 0 = aucune exigence</label><input id="cseuil" type="number" min="0" max="100" value="${c.seuil}"><button onclick="saveCourse('${id}')">Enregistrer</button></div>
   <div class="card"><h3>Texte sur la page du cours</h3>${r.blocs.map(b => row('Blocs', b.id, '<b>' + esc(b.titre) + '</b> ' + esc(b.texte).slice(0, 80))).join('')}
@@ -446,6 +459,19 @@ async function uploadFiles(id, sid, fac, list) {
 }
 async function addSeq(id) { const r = await api('adminSaveSequence', adminPw, id, { titre: $('#sn').value }); r.ok ? adminCourse(id) : alert(r.message); }
 async function renameSeq(id, sid) { const g = admDet.sequences.filter(x => x.id === sid)[0], t = prompt('Titre du module :', g.titre); if (t === null) return; const r = await api('adminSaveSequence', adminPw, id, { id: sid, titre: t }); r.ok ? adminCourse(id) : alert(r.message); }
+/** Réduit l'image (1000 px max, JPEG) avant l'envoi : plus rapide et dans les limites d'Apps Script. */
+function resizeImg(file, max) {
+  return new Promise((ok, ko) => { const img = new Image(), u = URL.createObjectURL(file);
+    img.onload = () => { const k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(u); ok(c.toDataURL('image/jpeg', .82).split(',')[1]); };
+    img.onerror = () => ko(new Error('Image illisible.')); img.src = u; });
+}
+async function saveImage(id, remove) {
+  const f = $('#cimg').files[0], url = $('#cimu').value.trim(); let img;
+  if (remove) img = { url: '' }; else if (f) { try { img = { fichier: { nom: f.name.replace(/\.[^.]+$/, '') + '.jpg', mime: 'image/jpeg', b64: await resizeImg(f, 1000) } }; } catch (e) { return alert(e.message); } }
+  else if (url) img = { url }; else return alert('Choisissez une image ou collez un lien.');
+  const r = await api('adminSetCourseImage', adminPw, id, img); r.ok ? adminCourse(id) : alert(r.message);
+}
 async function saveIntro(id, sid) { const g = admDet.sequences.filter(x => x.id === sid)[0], r = await api('adminSaveSequence', adminPw, id, { id: sid, titre: g.titre, intro: $('#si_' + sid).value }); r.ok ? (alert('Introduction enregistrée.'), adminCourse(id)) : alert(r.message); }
 async function moveSeq(id, sid, d) { await api('adminMoveSequence', adminPw, id, sid, d); adminCourse(id); }
 async function delSeq(id, sid) {
@@ -460,6 +486,51 @@ async function addQ(id) {
     bonnes: $('#qb').value.split(/[,;\s]+/).filter(Boolean).map(n => n - 1) };
   const r = await api('adminAddQuestion', adminPw, id, q); r.ok ? adminCourse(id) : alert(r.message);
 }
+
+/* ---------- Notifications : nouveaux messages et nouveaux cours ---------- */
+// La page interroge le serveur toutes les 30 s (2 min si elle est en arrière-plan). Alerte dans l'application, et notification du système si l'utilisateur les a autorisées.
+// Limite : sans serveur de « push », rien n'arrive quand l'application est complètement fermée.
+function toast(html, go) {
+  const t = $('#toast'), d = document.createElement('div'); d.innerHTML = html; d.onclick = () => { d.remove(); go && go(); }; t.appendChild(d); setTimeout(() => d.remove(), 7000);
+}
+async function askNotif() {
+  if (!('Notification' in window)) return alert('Les notifications ne sont pas disponibles sur cet appareil.');
+  const p = await Notification.requestPermission(); nav();
+  if (p === 'granted') sysNotif('Alertes activées', 'Vous serez prévenu des nouveaux messages et des nouveaux cours.', {});
+}
+async function sysNotif(title, body, data) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try { const reg = await navigator.serviceWorker.ready; reg.showNotification(title, { body, icon: 'icon-192.png', badge: 'icon-192.png', tag: data.cid ? 'c-' + data.cid + (data.tab || '') : 'n', renotify: true, data }); }
+  catch (e) { try { new Notification(title, { body, icon: 'icon-192.png' }); } catch (x) { } }
+}
+function openFromNotif(d) { if (!tok) return; d && d.cid ? openCourse(d.cid, d.tab || 'docs') : home(); }
+function refreshBadges() {
+  document.querySelectorAll('[data-open]').forEach(b => { const n = unread[b.dataset.open]; b.innerHTML = 'Ouvrir' + (n ? `<span class="bdg">💬 ${n}</span>` : ''); });
+  const t = [...document.querySelectorAll('.tabs button')].filter(x => /^(🔒 )?Discussion/.test(x.textContent))[0];
+  if (t && cur && unread[cur.id]) t.innerHTML = `Discussion<span class="bdg">${unread[cur.id]}</span>`;
+}
+async function poll() {
+  if (!tok) return;
+  if (!since) { since = Date.now(); try { localStorage.setItem('since', since); } catch (e) { } return; }  // première fois : pas d'historique à signaler
+  const r = await api('notifs', tok, since); if (!r.ok) return;
+  since = r.now; try { localStorage.setItem('since', since); } catch (e) { }
+  r.messages.forEach(m => {
+    const watching = chatOpen === m.cours && !document.hidden; if (watching) return;   // la discussion ouverte se met à jour toute seule
+    unread[m.cours] = (unread[m.cours] || 0) + 1;
+    const go = () => openCourse(m.cours, 'chat'), t = '💬 ' + m.pseudo + ' · ' + m.titreCours;
+    document.hidden ? sysNotif(t, m.texte, { cid: m.cours, tab: 'chat' }) : toast(`<b>${esc(t)}</b><br>${esc(m.texte)}`, go);
+  });
+  r.cours.forEach(c => {
+    const go = () => home(), t = '🆕 Nouveau cours : ' + c.titre;
+    document.hidden ? sysNotif(t, c.description || 'Un nouveau cours est disponible.', {}) : toast(`<b>${esc(t)}</b><br>${esc(c.description)}`, go);
+  });
+  if (r.messages.length) refreshBadges();
+  if (r.cours.length && document.querySelector('[data-home]')) home();
+}
+function startPolling() { stopPolling(); if (!tok) return; const loop = async () => { await poll(); pollT = setTimeout(loop, document.hidden ? 120000 : 30000); }; loop(); }
+function stopPolling() { clearTimeout(pollT); pollT = null; since = 0; }
+document.addEventListener('visibilitychange', () => { if (!document.hidden && tok) { clearTimeout(pollT); startPolling(); } });
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => e.data && e.data.open && openFromNotif(e.data.open));
 
 /* ---------- Application installable (PWA) ---------- */
 let evInstall = null;
@@ -476,7 +547,8 @@ async function installApp() {
 window.addEventListener('appinstalled', () => { $('#inst').style.display = 'none'; });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
-tok ? home() : auth();
+tok ? (home(), startPolling()) : auth();
+try { const h = decodeURIComponent(location.hash.slice(1)); if (h[0] === '{') { history.replaceState(null, '', location.pathname); setTimeout(() => openFromNotif(JSON.parse(h)), 800); } } catch (e) { }
 </script>
 </body>
 </html>

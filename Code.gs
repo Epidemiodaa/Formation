@@ -13,7 +13,8 @@ const TABS = {
   // Users : l'administrateur voit et modifie pseudo et motdepasse directement ici (id = identifiant stable, ne pas modifier)
   Users: ['id', 'pseudo', 'motdepasse', 'jeton', 'cree'],
   // pretest : « obligatoire » (défaut, vide) ou « facultatif » (cours accessible sans pré-test) ; seuil : note de réussite des quiz en % (vide = 70, 0 = aucune exigence)
-  Cours: ['id', 'titre', 'description', 'actif', 'pretest', 'seuil'],
+  // cree = date de création (pour signaler un nouveau cours) ; image = adresse de l'image de couverture
+  Cours: ['id', 'titre', 'description', 'actif', 'pretest', 'seuil', 'cree', 'image'],
   // facultatif = TRUE : ressource complémentaire, consultable par tous les inscrits mais sans obligation de lecture
   // sequence = id de la séquence ; vide = document hors séquence
   Documents: ['id', 'cours', 'titre', 'url', 'facultatif', 'sequence'],
@@ -37,7 +38,7 @@ const PHASES_ALL = PHASES.concat('Quiz'); // Quiz = quiz de fin de séquence
 const API = { login, me, profil, updateProfile, enroll, unenroll, course, openDoc, markDoc, startTest, submitTest,
   getMessages, postMessage, editMessage, deleteMessage,
   adminLogin, adminOverview, adminSaveCourse, adminAddDoc, adminAddQuestion,
-  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE: adminImporterMPE_, adminDeleteCourse, adminUpdate, adminImportQuestions, adminSaveSequence, adminMoveSequence, adminDeleteSequence };
+  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE: adminImporterMPE_, adminDeleteCourse, adminUpdate, adminImportQuestions, adminSaveSequence, adminMoveSequence, adminDeleteSequence, adminSetCourseImage, notifs };
 
 function doPost(e) {
   try {
@@ -65,7 +66,7 @@ function rows_(n) {
   const v = sh_(n).getDataRange().getValues(), h = v.shift();
   return v.map((r, i) => { const o = { _r: i + 2 }; h.forEach((k, j) => o[k] = r[j]); return o; });
 }
-function add_(n, o) { const s = sh_(n); s.appendRow(hdr_(s).map(k => o[k] === undefined ? '' : o[k])); }
+function add_(n, o) { if (n === 'Cours' && o.cree === undefined) o.cree = new Date(); const s = sh_(n); s.appendRow(hdr_(s).map(k => o[k] === undefined ? '' : o[k])); }
 function set_(n, r, k, v) { const s = sh_(n); s.getRange(r, hdr_(s).indexOf(k) + 1).setValue(v); }
 const S = v => String(v);
 const id_ = p => p + Utilities.getUuid().slice(0, 8);
@@ -132,7 +133,7 @@ function needEnrolled_(u, cid) { if (!enrolled_(u.id, cid)) throw new Error('Ins
 function me(tok) {
   const u = auth_(tok), mine = rows_('Inscriptions').filter(i => S(i.uid) === S(u.id)).map(i => S(i.cours));
   const cours = rows_('Cours').filter(c => c.actif !== false && S(c.actif).toUpperCase() !== 'FALSE')
-    .map(c => ({ id: S(c.id), titre: c.titre, description: c.description, inscrit: mine.indexOf(S(c.id)) >= 0 }));
+    .map(c => ({ id: S(c.id), titre: c.titre, description: c.description, image: S(c.image), nouveau: !!c.cree && Date.now() - new Date(c.cree).getTime() < 7 * 864e5, inscrit: mine.indexOf(S(c.id)) >= 0 }));
   return { ok: true, pseudo: S(u.pseudo), cours };
 }
 function enroll(tok, cid) {
@@ -194,7 +195,7 @@ function course(tok, cid) {
   rows_('Resultats').filter(r => S(r.uid) === S(u.id) && S(r.cours) === S(cid) && r.phase !== 'Quiz').forEach(r => res[r.phase] = { score: r.score, total: r.total, corrige: parseDetails_(r) });
   const p = plan_(u.id, cid);
   const dOut = d => { const l = p.lec[S(d.id)]; return { id: S(d.id), titre: d.titre, url: d.url, facultatif: opt_(d), ouvert: !!(l && l.ouvert), lu: !!(l && l.lu) }; };
-  return { ok: true, id: S(c.id), titre: c.titre, description: c.description,
+  return { ok: true, id: S(c.id), titre: c.titre, description: c.description, image: S(c.image),
     // Contenu du cours envoyé seulement une fois le pré-test passé ; le contenu d'une séquence seulement quand elle est ouverte
     blocs: p.preOk ? rows_('Blocs').filter(b => S(b.cours) === S(cid)).map(b => ({ titre: b.titre, texte: b.texte })) : [],
     sequences: p.preOk ? p.list.map(s => ({ id: s.id, titre: s.titre, virtual: s.virtual, verrouille: !s.unlocked, complete: s.complete, lu: s.lu, lus: s.lus, total: s.req.length,
@@ -389,7 +390,7 @@ function adminCourseDetail(pw, cid) {
   const c = rows_('Cours').filter(x => S(x.id) === S(cid))[0]; if (!c) return { ok: false, message: 'Cours introuvable.' };
   const mine = r => S(r.cours) === S(cid);
   return { ok: true,
-    cours: { id: S(c.id), titre: c.titre, description: c.description, actif: !(c.actif === false || S(c.actif).toUpperCase() === 'FALSE'), pretest: cfg_(cid).pretestFac ? 'facultatif' : 'obligatoire', seuil: cfg_(cid).seuil },
+    cours: { id: S(c.id), titre: c.titre, description: c.description, image: S(c.image), actif: !(c.actif === false || S(c.actif).toUpperCase() === 'FALSE'), pretest: cfg_(cid).pretestFac ? 'facultatif' : 'obligatoire', seuil: cfg_(cid).seuil },
     sequences: seqs_(cid).map(x => ({ id: S(x.id), titre: x.titre, intro: S(x.intro) })),
     documents: rows_('Documents').filter(mine).map(d => ({ id: S(d.id), titre: d.titre, url: d.url, facultatif: opt_(d), sequence: seqOk_(cid, d.sequence) })),
     blocs: rows_('Blocs').filter(mine).map(b => ({ id: S(b.id), titre: b.titre, texte: b.texte })),
@@ -511,4 +512,35 @@ function adminDeleteSequence(pw, cid, sid) {
     rows_(t[0]).filter(r => S(r.cours) === S(cid) && S(r.sequence) === S(sid) && t[1](r)).reverse().forEach(r => sh_(t[0]).deleteRow(r._r)));
   sh_('Sequences').deleteRow(x._r);
   return { ok: true };
+}
+
+/* ---------- Image de couverture d'un cours ---------- */
+/** img : { fichier: { nom, mime, b64 } } (déposé dans Drive, lisible par lien) ou { url } (adresse https) ; { url: '' } retire l'image. */
+function adminSetCourseImage(pw, cid, img) {
+  admin_(pw);
+  const c = rows_('Cours').filter(x => S(x.id) === S(cid))[0]; if (!c) return { ok: false, message: 'Cours introuvable.' };
+  let url = '';
+  if (img && img.fichier) {
+    if (!/^image\//.test(S(img.fichier.mime))) return { ok: false, message: 'Le fichier doit être une image.' };
+    const f = DriveApp.createFile(Utilities.newBlob(Utilities.base64Decode(img.fichier.b64), img.fichier.mime, img.fichier.nom));
+    f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    url = 'https://drive.google.com/thumbnail?id=' + f.getId() + '&sz=w1200';
+  } else if (img && S(img.url).trim()) {
+    url = S(img.url).trim(); if (!/^https:\/\//i.test(url)) return { ok: false, message: 'Le lien de l’image doit commencer par https://.' };
+  }
+  set_('Cours', c._r, 'image', url);
+  return { ok: true, image: url };
+}
+
+/* ---------- Notifications ---------- */
+/** Interrogé régulièrement par la page : nouveaux messages des autres dans mes cours, et nouveaux cours, depuis `since` (ms). */
+function notifs(tok, since) {
+  const u = auth_(tok), now = Date.now(); since = Number(since) || now;
+  const mine = {}; rows_('Inscriptions').filter(i => S(i.uid) === S(u.id)).forEach(i => mine[S(i.cours)] = 1);
+  const cs = rows_('Cours').filter(c => c.actif !== false && S(c.actif).toUpperCase() !== 'FALSE'), titre = {}; cs.forEach(c => titre[S(c.id)] = c.titre);
+  const names = {}; rows_('Users').forEach(x => names[S(x.id)] = S(x.pseudo));
+  const messages = rows_('Messages').filter(m => mine[S(m.cours)] && titre[S(m.cours)] !== undefined && S(m.uid) !== S(u.id) && new Date(m.date).getTime() > since).slice(-20)
+    .map(m => ({ id: S(m.id), cours: S(m.cours), titreCours: titre[S(m.cours)], pseudo: names[S(m.uid)] || S(m.pseudo), texte: S(m.texte).slice(0, 140) }));
+  const cours = cs.filter(c => c.cree && new Date(c.cree).getTime() > since && !mine[S(c.id)]).map(c => ({ id: S(c.id), titre: c.titre, description: S(c.description).slice(0, 140), image: S(c.image) }));
+  return { ok: true, now, messages, cours };
 }

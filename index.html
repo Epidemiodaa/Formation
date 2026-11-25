@@ -25,6 +25,7 @@ input,textarea,select{width:100%;padding:8px;margin:4px 0 10px;border:1px solid 
 .mu{color:var(--mu);font-size:.9em}.er{color:var(--er)}.ok{color:var(--pr)}
 .msg{padding:6px 0;border-bottom:1px solid var(--bd)}.msg.me{background:rgba(11,110,79,.07)}
 table{border-collapse:collapse;font-size:.9em;margin:6px 0}th,td{border:1px solid var(--bd);padding:3px 7px;text-align:center}select{width:auto;max-width:100%;margin:4px 4px 4px 0}
+.dz{border:2px dashed var(--bd);border-radius:10px;padding:10px;margin:10px 0}.dz.over{border-color:var(--pr);background:rgba(11,110,79,.08)}.dz .msg[draggable=true]{cursor:grab}.lk{color:var(--pr);text-decoration:underline;cursor:pointer}
 label.o{display:block;padding:6px 8px;border:1px solid var(--bd);border-radius:8px;margin:4px 0;cursor:pointer}label.o input{width:auto;margin:0 8px 0 0}
 </style>
 </head>
@@ -255,8 +256,9 @@ async function adminCourse(id) {
   <label class="o"><input type="checkbox" id="ca" ${c.actif ? 'checked' : ''}> Cours visible par les utilisateurs</label><button onclick="saveCourse('${id}')">Enregistrer</button></div>
   <div class="card"><h3>Texte sur la page du cours</h3>${r.blocs.map(b => row('Blocs', b.id, '<b>' + esc(b.titre) + '</b> ' + esc(b.texte).slice(0, 80))).join('')}
   <input id="bt" placeholder="Titre (facultatif)"><textarea id="bx" rows="3" placeholder="Texte : objectifs, consignes, résumé…"></textarea><button onclick="addBloc('${id}')">Ajouter</button></div>
-  <div class="card"><h3>Documents</h3>${r.documents.map(d => row('Documents', d.id, '📄 ' + esc(d.titre) + (d.facultatif ? ' <span class="mu">(facultatif)</span>' : ''))).join('')}
-  <input id="dt" placeholder="Titre du document"><input id="du" placeholder="Lien (Drive, YouTube, site…)"><input id="df" type="file"><label class="o"><input type="checkbox" id="dfac"> Facultatif (ressource complémentaire : pas de lecture obligatoire)</label><button onclick="addDoc('${id}')">Ajouter</button></div>
+  <div class="card"><h3>Documents</h3><p class="mu">Glissez plusieurs fichiers à la fois dans la zone voulue (ou cliquez sur « choisissez-les »). Vous pouvez aussi glisser un document existant d’une zone à l’autre pour changer son statut.</p>
+  ${dzone(id, false, '📌 Lecture obligatoire', r.documents.filter(d => !d.facultatif))}${dzone(id, true, '📎 Facultatif (ressources complémentaires)', r.documents.filter(d => d.facultatif))}
+  <h4>Ajouter un lien</h4><input id="dt" placeholder="Titre du document"><input id="du" placeholder="Lien (Drive, YouTube, site…)"><label class="o"><input type="checkbox" id="dfac"> Facultatif (pas de lecture obligatoire)</label><button onclick="addDoc('${id}')">Ajouter le lien</button></div>
   <div class="card"><h3>Questions (${r.questions.length})</h3><div style="max-height:220px;overflow:auto">${r.questions.map(q => row('Questions', q.id, `<span class="mu">${q.phase} · ${q.type}</span> ${esc(q.question).slice(0, 70)}`)).join('')}</div>
   <select id="qp"><option>Pré-test</option><option>Post-test</option></select><textarea id="qq" rows="2" placeholder="Question"></textarea><textarea id="qo" rows="4" placeholder="Un choix par ligne"></textarea>
   <input id="qb" placeholder="Numéros des bonnes réponses, ex. 2 ou 1,3"><textarea id="qe" rows="2" placeholder="Explication (affichée après le test)"></textarea><button onclick="addQ('${id}')">Ajouter la question</button></div>
@@ -284,10 +286,32 @@ async function importQ(id) {
   alert(r.ajoutees + ' question(s) importée(s).' + (r.erreurs.length ? '\n\nÀ corriger :\n' + r.erreurs.join('\n') : '')); adminCourse(id);
 }
 async function addBloc(id) { const r = await api('adminAddBloc', adminPw, id, $('#bt').value, $('#bx').value); r.ok ? adminCourse(id) : alert(r.message); }
+const docRow = (d, id) => `<div class="msg" draggable="true" ondragstart="event.dataTransfer.setData('text/doc', '${d.id}')">⠿ 📄 ${esc(d.titre)} <button class="l" onclick="edit('Documents','${d.id}','${id}')">Modifier</button><button class="l" onclick="del('Documents','${d.id}','${id}')">Supprimer</button></div>`;
+const dzone = (id, fac, titre, list) => `<div class="dz" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="dzDrop(event,'${id}',${fac})">
+  <b>${titre}</b>${list.map(d => docRow(d, id)).join('') || '<p class="mu">Aucun document.</p>'}
+  <p class="mu">Déposez des fichiers ici, ou <label class="lk">choisissez-les<input type="file" multiple hidden onchange="uploadFiles('${id}',${fac},this.files)"></label>.</p><div class="mu" id="up${fac ? 1 : 0}"></div></div>`;
+async function dzDrop(e, id, fac) {
+  e.preventDefault(); e.currentTarget.classList.remove('over');
+  const files = e.dataTransfer.files, did = e.dataTransfer.getData('text/doc');
+  if (files && files.length) return uploadFiles(id, fac, files);
+  const g = did && admDet.documents.filter(x => x.id === did)[0]; if (!g || !!g.facultatif === fac) return;
+  const r = await api('adminUpdate', adminPw, 'Documents', did, { facultatif: fac }); r.ok ? adminCourse(id) : alert(r.message);
+}
+/** Envoie plusieurs fichiers, l'un après l'autre, dans la catégorie choisie (fac = facultatif). */
+async function uploadFiles(id, fac, list) {
+  const files = [...list], log = $('#up' + (fac ? 1 : 0)), bad = []; let ok = 0;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i]; log.textContent = `Envoi ${i + 1}/${files.length} : ${f.name}…`;
+    if (f.size > 25 * 1024 * 1024) { bad.push(f.name + ' : plus de 25 Mo'); continue; }
+    const b64 = await new Promise(res => { const x = new FileReader(); x.onload = () => res(x.result.split(',')[1]); x.readAsDataURL(f); });
+    const r = await api('adminAddDoc', adminPw, id, { titre: f.name.replace(/\.[^.]+$/, ''), facultatif: fac, fichier: { nom: f.name, mime: f.type || 'application/octet-stream', b64 } });
+    r.ok ? ok++ : bad.push(f.name + ' : ' + r.message);
+  }
+  if (bad.length) alert(ok + ' document(s) ajouté(s).\n\nNon ajoutés :\n' + bad.join('\n'));
+  adminCourse(id);
+}
 async function addDoc(id) {
-  const doc = { titre: $('#dt').value, url: $('#du').value, facultatif: $('#dfac').checked }, f = $('#df').files[0];
-  if (f) doc.fichier = { nom: f.name, mime: f.type || 'application/octet-stream', b64: await new Promise(ok => { const x = new FileReader(); x.onload = () => ok(x.result.split(',')[1]); x.readAsDataURL(f); }) };
-  const r = await api('adminAddDoc', adminPw, id, doc); r.ok ? adminCourse(id) : alert(r.message);
+  const r = await api('adminAddDoc', adminPw, id, { titre: $('#dt').value, url: $('#du').value, facultatif: $('#dfac').checked }); r.ok ? adminCourse(id) : alert(r.message);
 }
 async function addQ(id) {
   const q = { phase: $('#qp').value, question: $('#qq').value, options: $('#qo').value.split('\n'), explication: $('#qe').value,

@@ -27,7 +27,7 @@ const PHASES = ['Pré-test', 'Post-test'];
 const API = { login, me, profil, updateProfile, enroll, unenroll, course, startTest, submitTest,
   getMessages, postMessage, editMessage, deleteMessage,
   adminLogin, adminOverview, adminSaveCourse, adminAddDoc, adminAddQuestion,
-  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE };
+  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE: adminImporterMPE_ };
 
 function doPost(e) {
   try {
@@ -292,4 +292,10 @@ function adminAddBloc(pw, cid, titre, texte) {
   if (!S(texte).trim()) return { ok: false, message: 'Texte requis.' };
   add_('Blocs', { id: id_('b'), cours: S(cid), titre: S(titre || '').slice(0, 120), texte: S(texte).slice(0, 5000) });
   return { ok: true };
+}
+/** Import du cours MPE : nécessite le fichier Seed.gs dans le projet (sans lui, le reste de la plateforme fonctionne quand même). */
+function adminImporterMPE_(pw) {
+  admin_(pw);
+  if (typeof importerCoursMPE !== 'function') return { ok: false, message: 'Ajoutez le fichier Seed.gs au projet Apps Script, puis redéployez.' };
+  return importerCoursMPE();
 }

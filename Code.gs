@@ -7,7 +7,7 @@
  * Déploiement : Déployer > Application Web > Exécuter en tant que moi, accès : tout le monde.
  * Exécuter setup() une fois pour créer les onglets et autoriser Drive.
  */
-const ADMIN_PASSWORD = 'CHANGEZ-MOI'; // <<< à modifier avant déploiement
+const ADMIN_PASSWORD = 'Silo@2000'; // mot de passe de l'espace administrateur
 const SHEET_ID = '1hZ7v3_5K2qhD5N4YRmt3C96OsxOIk0iuQdQUwYSrwQc';
 const TABS = {
   // Users : l'administrateur voit et modifie pseudo et motdepasse directement ici (id = identifiant stable, ne pas modifier)

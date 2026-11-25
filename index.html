@@ -32,14 +32,20 @@ label.o{display:block;padding:6px 8px;border:1px solid var(--bd);border-radius:8
 <main id="app"></main>
 <script>
 // >>> Coller ici l'URL /exec du déploiement Apps Script <<<
-const API_URL = 'COLLER_ICI_URL_EXEC';
+const API_URL = 'https://script.google.com/macros/s/AKfycbzmylSAU7ocsFHMVDGNaO2jladI_obqWVw8m-4pkVr4R1gVxmZU8kRQjwqSfczdIVEE/exec';
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let tok = localStorage.getItem('tok'), pseudo = localStorage.getItem('pseudo'), adminPw = null, timer = null, cur = null;
 
 async function api(action, ...args) {
-  try { return await (await fetch(API_URL, { method: 'POST', body: JSON.stringify({ action, args }) })).json(); }
-  catch (e) { return { ok: false, message: 'Connexion impossible.' }; }
+  if (!/^https:\/\/script\.google(usercontent)?\.com\//.test(API_URL))
+    return { ok: false, message: 'Adresse du serveur non configurée : remplacez COLLER_ICI_URL_EXEC au début du script de index.html par l’URL /exec de votre déploiement Apps Script.' };
+  let res;
+  try { res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action, args }) }); }
+  catch (e) { return { ok: false, message: 'Pas de connexion au serveur. Vérifiez internet, puis que le déploiement Apps Script est « Exécuter en tant que : moi » et « Accès : tout le monde ».' }; }
+  const txt = await res.text();
+  try { return JSON.parse(txt); }
+  catch (e) { return { ok: false, message: 'Le serveur a répondu autre chose que des données (autorisation ou déploiement à refaire : exécutez setup() dans Apps Script, puis redéployez en « Nouvelle version »).' }; }
 }
 function view(html) { clearInterval(timer); $('#app').innerHTML = html; window.scrollTo(0, 0); }
 function nav() {

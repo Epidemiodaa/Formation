@@ -52,14 +52,14 @@ function fail(r) { if (/Session expirée/.test(r.message || '')) return logout()
 /* ---------- Connexion / inscription ---------- */
 function auth(msg) {
   nav();
-  view(`<div class="card"><h2>Bienvenue</h2><p class="mu">Inscription libre : un pseudonyme et un mot de passe suffisent.</p>
-  <input id="p" placeholder="Pseudonyme" autocapitalize="off"><input id="w" type="password" placeholder="Mot de passe">
-  <p class="er" id="m">${esc(msg || '')}</p><button onclick="doAuth('login')">Se connecter</button> <button class="s" onclick="doAuth('register')">Créer mon compte</button></div>`);
+  view(`<div class="card"><h2>Bienvenue</h2><p class="mu">Première visite ? Choisissez un pseudonyme et un mot de passe : votre compte est créé tout de suite, sans validation.</p>
+  <input id="p" placeholder="Pseudonyme (3 à 30 caractères, sans espace)" autocapitalize="off"><input id="w" type="password" placeholder="Mot de passe (6 caractères minimum)">
+  <p class="er" id="m">${esc(msg || '')}</p><button onclick="doAuth()">Continuer</button></div>`);
 }
-async function doAuth(a) {
-  const r = await api(a, $('#p').value, $('#w').value);
+async function doAuth() {
+  const r = await api('login', $('#p').value, $('#w').value);
   if (!r.ok) return ($('#m').textContent = r.message);
-  setSession(r); home();
+  setSession(r); if (r.created) alert('Compte créé. Bienvenue !'); home();
 }
 
 /* ---------- Accueil : mes cours + catalogue ---------- */
@@ -76,15 +76,19 @@ async function join(id) { const r = await api('enroll', tok, id); r.ok ? openCou
 async function leave(id) { if (confirm('Se désinscrire de ce cours ?')) { await api('unenroll', tok, id); home(); } }
 
 /* ---------- Profil ---------- */
-function profile() {
-  view(`<div class="card"><h2>Mon profil</h2><label>Pseudonyme</label><input id="np" value="${esc(pseudo)}">
-  <label>Nouveau mot de passe (laisser vide pour ne pas changer)</label><input id="nw" type="password">
-  <p id="m" class="er"></p><button onclick="saveProfile()">Enregistrer</button></div>`);
+async function profile() {
+  view('<p class="mu">Chargement…</p>');
+  const r = await api('profil', tok); if (!r.ok) return fail(r);
+  view(`<div class="card"><h2>Mon profil</h2><p class="mu">Compte créé le ${new Date(r.cree).toLocaleDateString('fr-FR')}</p>
+  <label>Pseudonyme</label><input id="np" value="${esc(r.pseudo)}" autocapitalize="off">
+  <label>Nouveau mot de passe (laisser vide pour ne pas changer)</label><input id="nw" type="password" placeholder="6 caractères minimum">
+  <p id="m" class="er"></p><button onclick="saveProfile()">Enregistrer</button></div>
+  <h3>Mes cours et résultats</h3>${r.cours.map(c => `<div class="card"><b>${esc(c.titre)}</b><p class="mu">Pré-test : ${c.pre || 'non passé'} · Post-test : ${c.post || 'non passé'}</p><button class="s" onclick="openCourse('${c.id}')">Ouvrir</button></div>`).join('') || '<p class="mu">Aucune inscription.</p>'}`);
 }
 async function saveProfile() {
   const r = await api('updateProfile', tok, $('#np').value, $('#nw').value);
-  if (!r.ok) return ($('#m').textContent = r.message);
-  pseudo = r.pseudo; localStorage.setItem('pseudo', pseudo); nav(); $('#m').className = 'ok'; $('#m').textContent = 'Enregistré.';
+  if (!r.ok) return ($('#m').className = 'er', $('#m').textContent = r.message);
+  pseudo = r.pseudo; localStorage.setItem('pseudo', pseudo); nav(); $('#nw').value = ''; $('#m').className = 'ok'; $('#m').textContent = 'Enregistré.';
 }
 
 /* ---------- Page d'un cours ---------- */

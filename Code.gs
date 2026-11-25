@@ -10,18 +10,19 @@
 const ADMIN_PASSWORD = 'CHANGEZ-MOI'; // <<< à modifier avant déploiement
 const SHEET_ID = '1hZ7v3_5K2qhD5N4YRmt3C96OsxOIk0iuQdQUwYSrwQc';
 const TABS = {
-  Users: ['pseudo', 'sel', 'hash', 'jeton', 'cree'],
+  // Users : l'administrateur voit et modifie pseudo et motdepasse directement ici (id = identifiant stable, ne pas modifier)
+  Users: ['id', 'pseudo', 'motdepasse', 'jeton', 'cree'],
   Cours: ['id', 'titre', 'description', 'actif'],
   Documents: ['id', 'cours', 'titre', 'url'],
   // options = JSON ["A","B"] ; bonnes = JSON [0] (index à partir de 0, plusieurs = choix multiple)
   Questions: ['id', 'cours', 'phase', 'question', 'options', 'bonnes', 'explication'],
-  Inscriptions: ['pseudo', 'cours', 'date'],
-  Resultats: ['date', 'pseudo', 'cours', 'phase', 'score', 'total'],
-  Messages: ['id', 'date', 'cours', 'pseudo', 'texte']
+  Inscriptions: ['uid', 'pseudo', 'cours', 'date'],
+  Resultats: ['date', 'uid', 'pseudo', 'cours', 'phase', 'score', 'total'],
+  Messages: ['id', 'date', 'cours', 'uid', 'pseudo', 'texte']
 };
 const PHASES = ['Pré-test', 'Post-test'];
 
-const API = { register, login, me, updateProfile, enroll, unenroll, course, startTest, submitTest,
+const API = { login, me, profil, updateProfile, enroll, unenroll, course, startTest, submitTest,
   getMessages, postMessage, editMessage, deleteMessage,
   adminLogin, adminOverview, adminSaveCourse, adminAddDoc, adminAddQuestion };
 
@@ -34,13 +35,15 @@ function doPost(e) {
 }
 function doGet() { return out_({ ok: true, service: 'plateforme-formation' }); }
 function out_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
-function setup() { Object.keys(TABS).forEach(sh_); DriveApp.getRootFolder(); }
+function setup() { Object.keys(TABS).forEach(sh_); txt_(); DriveApp.getRootFolder(); }
+/** Colonnes pseudo / mot de passe en texte brut : « 0123 » ne perd pas son zéro. */
+function txt_() { sh_('Users').getRange('A:D').setNumberFormat('@'); }
 
 /* ---------- Accès au Sheet ---------- */
 function sh_(n) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
   let s = ss.getSheetByName(n);
-  if (!s) { s = ss.insertSheet(n); s.appendRow(TABS[n]); s.setFrozenRows(1); }
+  if (!s) { s = ss.insertSheet(n); s.appendRow(TABS[n]); s.setFrozenRows(1); if (n === 'Users') s.getRange('A:D').setNumberFormat('@'); }
   return s;
 }
 function rows_(n) {
@@ -53,53 +56,53 @@ const S = v => String(v);
 const id_ = p => p + Utilities.getUuid().slice(0, 8);
 
 /* ---------- Comptes ---------- */
-function hash_(sel, pw) {
-  return 'h:' + Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, sel + pw)
-    .map(b => ('0' + (b & 255).toString(16)).slice(-2)).join('');
-}
 function findUser_(p) { return rows_('Users').filter(u => S(u.pseudo).toLowerCase() === S(p).trim().toLowerCase())[0]; }
 function auth_(tok) {
   const u = tok && rows_('Users').filter(x => S(x.jeton) === S(tok))[0];
   if (!u) throw new Error('Session expirée : reconnectez-vous.');
   return u;
 }
-function validPseudo_(p) {
-  p = S(p).trim();
-  if (p.length < 3 || p.length > 30) throw new Error('Le pseudonyme doit avoir 3 à 30 caractères.');
-  return p;
-}
-function session_(u) { return { ok: true, token: u.jeton, pseudo: u.pseudo }; }
-function register(pseudo, pw) {
+// Critères usuels : pseudonyme de 3 à 30 caractères (lettres, chiffres, . _ -), sans espace ; mot de passe de 6 caractères minimum
+const PSEUDO_RE = /^[\p{L}\p{N}._-]{3,30}$/u;
+function checkPseudo_(p) { return PSEUDO_RE.test(p) ? '' : 'Pseudonyme : 3 à 30 caractères (lettres, chiffres, point, tiret, souligné), sans espace.'; }
+function checkPw_(pw) { return S(pw).length >= 6 ? '' : 'Mot de passe : 6 caractères minimum.'; }
+/** Première utilisation : un pseudonyme inconnu crée le compte tout de suite (aucune validation de l'administrateur). */
+function login(pseudo, pw) {
+  pseudo = S(pseudo).trim(); pw = S(pw);
   const lock = LockService.getScriptLock(); lock.waitLock(10000);
   try {
-    pseudo = validPseudo_(pseudo);
-    if (S(pw).length < 4) return { ok: false, message: 'Mot de passe : 4 caractères minimum.' };
-    if (findUser_(pseudo)) return { ok: false, message: 'Ce pseudonyme est déjà pris.' };
-    const sel = Utilities.getUuid(), jeton = 't' + Utilities.getUuid();
-    add_('Users', { pseudo, sel, hash: hash_(sel, pw), jeton, cree: new Date() });
-    return { ok: true, token: jeton, pseudo };
+    const u = findUser_(pseudo);
+    if (u) {
+      if (S(u.motdepasse) !== pw) return { ok: false, message: 'Mot de passe incorrect.' };
+      if (!u.jeton) { u.jeton = 't' + Utilities.getUuid(); set_('Users', u._r, 'jeton', u.jeton); }
+      return { ok: true, token: S(u.jeton), pseudo: S(u.pseudo) };
+    }
+    const err = checkPseudo_(pseudo) || checkPw_(pw);
+    if (err) return { ok: false, message: err };
+    const jeton = 't' + Utilities.getUuid();
+    add_('Users', { id: id_('u'), pseudo, motdepasse: pw, jeton, cree: new Date() });
+    return { ok: true, token: jeton, pseudo, created: true };
   } finally { lock.releaseLock(); }
 }
-function login(pseudo, pw) {
-  const u = findUser_(pseudo);
-  if (!u || u.hash !== hash_(u.sel, pw)) return { ok: false, message: 'Pseudonyme ou mot de passe incorrect.' };
-  return session_(u);
+/** Profil : infos du compte, cours suivis et résultats. */
+function profil(tok) {
+  const u = auth_(tok), res = rows_('Resultats').filter(r => S(r.uid) === S(u.id)), cs = rows_('Cours');
+  const cours = rows_('Inscriptions').filter(i => S(i.uid) === S(u.id)).map(i => {
+    const c = cs.filter(x => S(x.id) === S(i.cours))[0], r = ph => { const x = res.filter(y => S(y.cours) === S(i.cours) && y.phase === ph)[0]; return x ? x.score + '/' + x.total : null; };
+    return { id: S(i.cours), titre: c ? c.titre : '(cours supprimé)', pre: r('Pré-test'), post: r('Post-test') };
+  });
+  return { ok: true, pseudo: S(u.pseudo), cree: u.cree, cours };
 }
 /** Modifier son pseudonyme et/ou son mot de passe (laisser vide pour ne pas changer). */
 function updateProfile(tok, newPseudo, newPw) {
-  const u = auth_(tok);
-  if (newPseudo && S(newPseudo).trim() !== S(u.pseudo)) {
-    newPseudo = validPseudo_(newPseudo);
-    const ex = findUser_(newPseudo);
-    if (ex && ex._r !== u._r) return { ok: false, message: 'Ce pseudonyme est déjà pris.' };
-    ['Inscriptions', 'Resultats', 'Messages'].forEach(n => rows_(n).forEach(r => { if (S(r.pseudo) === S(u.pseudo)) set_(n, r._r, 'pseudo', newPseudo); }));
+  const u = auth_(tok); newPseudo = S(newPseudo || '').trim();
+  if (newPseudo && newPseudo !== S(u.pseudo)) {
+    const err = checkPseudo_(newPseudo); if (err) return { ok: false, message: err };
+    const ex = findUser_(newPseudo); if (ex && ex._r !== u._r) return { ok: false, message: 'Ce pseudonyme est déjà pris.' };
     set_('Users', u._r, 'pseudo', newPseudo);
   }
-  if (newPw) {
-    if (S(newPw).length < 4) return { ok: false, message: 'Mot de passe : 4 caractères minimum.' };
-    set_('Users', u._r, 'hash', hash_(u.sel, newPw));
-  }
-  return { ok: true, pseudo: newPseudo || u.pseudo };
+  if (newPw) { const err = checkPw_(newPw); if (err) return { ok: false, message: err }; set_('Users', u._r, 'motdepasse', S(newPw)); }
+  return { ok: true, pseudo: newPseudo || S(u.pseudo) };
 }
 
 /* ---------- Cours et inscriptions ---------- */
@@ -108,23 +111,23 @@ function activeCourse_(cid) {
   if (!c || c.actif === false || S(c.actif).toUpperCase() === 'FALSE') throw new Error('Cours introuvable.');
   return c;
 }
-function enrolled_(pseudo, cid) { return rows_('Inscriptions').some(i => S(i.pseudo) === S(pseudo) && S(i.cours) === S(cid)); }
-function needEnrolled_(u, cid) { if (!enrolled_(u.pseudo, cid)) throw new Error('Inscrivez-vous d’abord à ce cours.'); }
+function enrolled_(uid, cid) { return rows_('Inscriptions').some(i => S(i.uid) === S(uid) && S(i.cours) === S(cid)); }
+function needEnrolled_(u, cid) { if (!enrolled_(u.id, cid)) throw new Error('Inscrivez-vous d’abord à ce cours.'); }
 
 function me(tok) {
-  const u = auth_(tok), mine = rows_('Inscriptions').filter(i => S(i.pseudo) === S(u.pseudo)).map(i => S(i.cours));
+  const u = auth_(tok), mine = rows_('Inscriptions').filter(i => S(i.uid) === S(u.id)).map(i => S(i.cours));
   const cours = rows_('Cours').filter(c => c.actif !== false && S(c.actif).toUpperCase() !== 'FALSE')
     .map(c => ({ id: S(c.id), titre: c.titre, description: c.description, inscrit: mine.indexOf(S(c.id)) >= 0 }));
-  return { ok: true, pseudo: u.pseudo, cours };
+  return { ok: true, pseudo: S(u.pseudo), cours };
 }
 function enroll(tok, cid) {
   const u = auth_(tok); activeCourse_(cid);
-  if (!enrolled_(u.pseudo, cid)) add_('Inscriptions', { pseudo: u.pseudo, cours: S(cid), date: new Date() });
+  if (!enrolled_(u.id, cid)) add_('Inscriptions', { uid: u.id, pseudo: u.pseudo, cours: S(cid), date: new Date() });
   return { ok: true };
 }
 function unenroll(tok, cid) {
   const u = auth_(tok);
-  rows_('Inscriptions').filter(i => S(i.pseudo) === S(u.pseudo) && S(i.cours) === S(cid)).reverse()
+  rows_('Inscriptions').filter(i => S(i.uid) === S(u.id) && S(i.cours) === S(cid)).reverse()
     .forEach(i => sh_('Inscriptions').deleteRow(i._r));
   return { ok: true };
 }
@@ -132,7 +135,7 @@ function course(tok, cid) {
   const u = auth_(tok), c = activeCourse_(cid); needEnrolled_(u, cid);
   const qs = rows_('Questions').filter(q => S(q.cours) === S(cid));
   const res = {};
-  rows_('Resultats').filter(r => S(r.pseudo) === S(u.pseudo) && S(r.cours) === S(cid)).forEach(r => res[r.phase] = { score: r.score, total: r.total });
+  rows_('Resultats').filter(r => S(r.uid) === S(u.id) && S(r.cours) === S(cid)).forEach(r => res[r.phase] = { score: r.score, total: r.total });
   return { ok: true, id: S(c.id), titre: c.titre, description: c.description,
     documents: rows_('Documents').filter(d => S(d.cours) === S(cid)).map(d => ({ titre: d.titre, url: d.url })),
     nbQuestions: { 'Pré-test': qs.filter(q => q.phase === 'Pré-test').length, 'Post-test': qs.filter(q => q.phase === 'Post-test').length },
@@ -142,13 +145,13 @@ function course(tok, cid) {
 /* ---------- Tests ---------- */
 function shuffle_(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 function questions_(cid, phase) { return rows_('Questions').filter(q => S(q.cours) === S(cid) && q.phase === phase); }
-function done_(pseudo, cid, phase) { return rows_('Resultats').some(r => S(r.pseudo) === S(pseudo) && S(r.cours) === S(cid) && r.phase === phase); }
+function done_(uid, cid, phase) { return rows_('Resultats').some(r => S(r.uid) === S(uid) && S(r.cours) === S(cid) && r.phase === phase); }
 
 function startTest(tok, cid, phase) {
   const u = auth_(tok); activeCourse_(cid); needEnrolled_(u, cid);
   if (PHASES.indexOf(phase) < 0) return { ok: false, message: 'Phase inconnue.' };
-  if (done_(u.pseudo, cid, phase)) return { ok: false, message: 'Vous avez déjà passé ce test.' };
-  if (phase === 'Post-test' && !done_(u.pseudo, cid, 'Pré-test')) return { ok: false, message: 'Passez d’abord le pré-test.' };
+  if (done_(u.id, cid, phase)) return { ok: false, message: 'Vous avez déjà passé ce test.' };
+  if (phase === 'Post-test' && !done_(u.id, cid, 'Pré-test')) return { ok: false, message: 'Passez d’abord le pré-test.' };
   const qs = questions_(cid, phase);
   if (!qs.length) return { ok: false, message: 'Aucune question n’a encore été ajoutée.' };
   return { ok: true, questions: shuffle_(qs.map(q => ({
@@ -158,8 +161,8 @@ function startTest(tok, cid, phase) {
 /** reponses : { idQuestion: [index choisis] } — les non renseignées comptent comme fausses. */
 function submitTest(tok, cid, phase, reponses) {
   const u = auth_(tok); needEnrolled_(u, cid);
-  if (done_(u.pseudo, cid, phase)) return { ok: false, message: 'Vous avez déjà passé ce test.' };
-  if (phase === 'Post-test' && !done_(u.pseudo, cid, 'Pré-test')) return { ok: false, message: 'Passez d’abord le pré-test.' };
+  if (done_(u.id, cid, phase)) return { ok: false, message: 'Vous avez déjà passé ce test.' };
+  if (phase === 'Post-test' && !done_(u.id, cid, 'Pré-test')) return { ok: false, message: 'Passez d’abord le pré-test.' };
   const qs = questions_(cid, phase); let score = 0;
   const corr = qs.map(q => {
     const good = JSON.parse(q.bonnes).map(Number).sort(), got = ((reponses || {})[S(q.id)] || []).map(Number).sort();
@@ -167,26 +170,27 @@ function submitTest(tok, cid, phase, reponses) {
     const opts = JSON.parse(q.options);
     return { q: q.question, ok, bonnes: good.map(i => opts[i]), explication: q.explication };
   });
-  add_('Resultats', { date: new Date(), pseudo: u.pseudo, cours: S(cid), phase, score, total: qs.length });
+  add_('Resultats', { date: new Date(), uid: u.id, pseudo: u.pseudo, cours: S(cid), phase, score, total: qs.length });
   return { ok: true, score, total: qs.length, corrige: corr };
 }
 
 /* ---------- Discussion ---------- */
 function getMessages(tok, cid) {
   const u = auth_(tok); needEnrolled_(u, cid);
+  const names = {}; rows_('Users').forEach(x => names[S(x.id)] = S(x.pseudo));
   const m = rows_('Messages').filter(x => S(x.cours) === S(cid)).slice(-100)
-    .map(x => ({ id: S(x.id), date: x.date, pseudo: x.pseudo, texte: x.texte, mine: S(x.pseudo) === S(u.pseudo) }));
+    .map(x => ({ id: S(x.id), date: x.date, pseudo: names[S(x.uid)] || S(x.pseudo), texte: x.texte, mine: S(x.uid) === S(u.id) }));
   return { ok: true, messages: m };
 }
 function postMessage(tok, cid, texte) {
   const u = auth_(tok); needEnrolled_(u, cid);
   texte = S(texte || '').trim().slice(0, 1000);
   if (!texte) return { ok: false, message: 'Message vide.' };
-  add_('Messages', { id: id_('m'), date: new Date(), cours: S(cid), pseudo: u.pseudo, texte });
+  add_('Messages', { id: id_('m'), date: new Date(), cours: S(cid), uid: u.id, pseudo: u.pseudo, texte });
   return { ok: true };
 }
 function ownMessage_(u, mid) {
-  const m = rows_('Messages').filter(x => S(x.id) === S(mid) && S(x.pseudo) === S(u.pseudo))[0];
+  const m = rows_('Messages').filter(x => S(x.id) === S(mid) && S(x.uid) === S(u.id))[0];
   if (!m) throw new Error('Message introuvable.'); return m;
 }
 function editMessage(tok, mid, texte) { const m = ownMessage_(auth_(tok), mid); set_('Messages', m._r, 'texte', S(texte).trim().slice(0, 1000)); return { ok: true }; }

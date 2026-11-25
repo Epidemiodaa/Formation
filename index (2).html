@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plateforme de formation</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b6e4f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Formation">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1d2733;--mu:#64707d;--pr:#0b6e4f;--bd:#dde2e8;--er:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#14181d;--card:#1d242c;--tx:#e8ecf0;--mu:#9aa6b2;--pr:#3cc28f;--bd:#2f3943;--er:#f2827b}}
+*{box-sizing:border-box}body{margin:0;font:16px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--bd);position:sticky;top:0}
+header b{color:var(--pr)}main{max-width:760px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin:10px 0}
+button,input,textarea,select{font:inherit;color:inherit}
+button{background:var(--pr);color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer}
+button.s{background:none;color:var(--pr);border:1px solid var(--pr)}button.l{background:none;color:var(--mu);padding:4px 8px}
+input,textarea,select{width:100%;padding:8px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.tabs button{background:none;color:var(--tx);border:1px solid var(--bd)}.tabs button.on{background:var(--pr);color:#fff}
+.mu{color:var(--mu);font-size:.9em}.er{color:var(--er)}.ok{color:var(--pr)}
+.msg{padding:6px 0;border-bottom:1px solid var(--bd)}.msg.me{background:rgba(11,110,79,.07)}
+table{border-collapse:collapse;font-size:.9em;margin:6px 0}th,td{border:1px solid var(--bd);padding:3px 7px;text-align:center}select{width:auto;max-width:100%;margin:4px 4px 4px 0}
+label.o{display:block;padding:6px 8px;border:1px solid var(--bd);border-radius:8px;margin:4px 0;cursor:pointer}label.o input{width:auto;margin:0 8px 0 0}
+</style>
+</head>
+<body>
+<header><b>Plateforme de formation</b><span><button id="inst" class="s" style="display:none" onclick="installApp()">📲 Installer</button><span id="nav"></span></span></header>
+<main id="app"></main>
+<script>
+// >>> Coller ici l'URL /exec du déploiement Apps Script <<<
+const API_URL = 'https://script.google.com/macros/s/AKfycbzmylSAU7ocsFHMVDGNaO2jladI_obqWVw8m-4pkVr4R1gVxmZU8kRQjwqSfczdIVEE/exec';
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let tmr = null;
+let tok = localStorage.getItem('tok'), pseudo = localStorage.getItem('pseudo'), adminPw = null, timer = null, cur = null;
+
+async function api(action, ...args) {
+  if (!/^https:\/\/script\.google(usercontent)?\.com\//.test(API_URL))
+    return { ok: false, message: 'Adresse du serveur non configurée : remplacez COLLER_ICI_URL_EXEC au début du script de index.html par l’URL /exec de votre déploiement Apps Script.' };
+  let res;
+  try { res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action, args }) }); }
+  catch (e) { return { ok: false, message: 'Pas de connexion au serveur. Vérifiez internet, puis que le déploiement Apps Script est « Exécuter en tant que : moi » et « Accès : tout le monde ».' }; }
+  const txt = await res.text();
+  try { return JSON.parse(txt); }
+  catch (e) { return { ok: false, message: 'Le serveur a répondu autre chose que des données (autorisation ou déploiement à refaire : exécutez setup() dans Apps Script, puis redéployez en « Nouvelle version »).' }; }
+}
+function view(html) { clearInterval(timer); clearInterval(tmr); $('#app').innerHTML = html; window.scrollTo(0, 0); }
+function nav() {
+  $('#nav').innerHTML = tok ? `<button class="l" onclick="home()">Mes cours</button><button class="l" onclick="profile()">${esc(pseudo)}</button><button class="l" onclick="logout()">Quitter</button>` : `<button class="l" onclick="admin()">Admin</button>`;
+}
+function setSession(r) { tok = r.token; pseudo = r.pseudo; localStorage.setItem('tok', tok); localStorage.setItem('pseudo', pseudo); }
+function logout() { tok = null; localStorage.clear(); auth(); }
+function fail(r) { if (/Session expirée/.test(r.message || '')) return logout(); alert(r.message || 'Erreur'); }
+
+/* ---------- Connexion / inscription ---------- */
+function auth(msg) {
+  nav();
+  view(`<div class="card"><h2>Bienvenue</h2><p class="mu">Première visite ? Choisissez un pseudonyme et un mot de passe : votre compte est créé tout de suite, sans validation.</p>
+  <input id="p" placeholder="Pseudonyme (3 à 30 caractères, sans espace)" autocapitalize="off"><input id="w" type="password" placeholder="Mot de passe (6 caractères minimum)">
+  <p class="er" id="m">${esc(msg || '')}</p><button onclick="doAuth()">Continuer</button></div>`);
+}
+async function doAuth() {
+  const r = await api('login', $('#p').value, $('#w').value);
+  if (!r.ok) return ($('#m').textContent = r.message);
+  setSession(r); if (r.created) alert('Compte créé. Bienvenue !'); home();
+}
+
+/* ---------- Accueil : mes cours + catalogue ---------- */
+async function home() {
+  if (!tok) return auth(); nav(); view('<p class="mu">Chargement…</p>');
+  const r = await api('me', tok); if (!r.ok) return fail(r);
+  const item = c => `<div class="card"><b>${esc(c.titre)}</b><p class="mu">${esc(c.description)}</p>${c.inscrit
+    ? `<button onclick="openCourse('${c.id}')">Ouvrir</button> <button class="l" onclick="leave('${c.id}')">Me désinscrire</button>`
+    : `<button class="s" onclick="join('${c.id}')">S’inscrire</button>`}</div>`;
+  const mine = r.cours.filter(c => c.inscrit), other = r.cours.filter(c => !c.inscrit);
+  view(`<h2>Mes cours</h2>${mine.map(item).join('') || '<p class="mu">Vous n’êtes inscrit à aucun cours.</p>'}<h2>Cours disponibles</h2>${other.map(item).join('') || '<p class="mu">Aucun autre cours.</p>'}`);
+}
+async function join(id) { const r = await api('enroll', tok, id); r.ok ? openCourse(id) : fail(r); }
+async function leave(id) { if (confirm('Se désinscrire de ce cours ?')) { await api('unenroll', tok, id); home(); } }
+
+/* ---------- Profil ---------- */
+async function profile() {
+  view('<p class="mu">Chargement…</p>');
+  const r = await api('profil', tok); if (!r.ok) return fail(r);
+  view(`<div class="card"><h2>Mon profil</h2><p class="mu">Compte créé le ${new Date(r.cree).toLocaleDateString('fr-FR')}</p>
+  <label>Pseudonyme</label><input id="np" value="${esc(r.pseudo)}" autocapitalize="off">
+  <label>Nouveau mot de passe (laisser vide pour ne pas changer)</label><input id="nw" type="password" placeholder="6 caractères minimum">
+  <p id="m" class="er"></p><button onclick="saveProfile()">Enregistrer</button></div>
+  <h3>Mes cours et résultats</h3>${r.cours.map(c => `<div class="card"><b>${esc(c.titre)}</b><p class="mu">Pré-test : ${c.pre || 'non passé'} · Post-test : ${c.post || 'non passé'}</p><button class="s" onclick="openCourse('${c.id}')">Ouvrir</button></div>`).join('') || '<p class="mu">Aucune inscription.</p>'}`);
+}
+async function saveProfile() {
+  const r = await api('updateProfile', tok, $('#np').value, $('#nw').value);
+  if (!r.ok) return ($('#m').className = 'er', $('#m').textContent = r.message);
+  pseudo = r.pseudo; localStorage.setItem('pseudo', pseudo); nav(); $('#nw').value = ''; $('#m').className = 'ok'; $('#m').textContent = 'Enregistré.';
+}
+
+/* ---------- Page d'un cours ---------- */
+async function openCourse(id, tab) {
+  view('<p class="mu">Chargement…</p>');
+  const r = await api('course', tok, id); if (!r.ok) { fail(r); return home(); }
+  cur = r; tab = tab || (r.verrous.docs ? 'Pré-test' : 'docs');
+  const T = [['docs', 'Documents'], ['Pré-test', 'Pré-test'], ['Post-test', 'Post-test'], ['chat', 'Discussion']];
+  view(`<h2>${esc(r.titre)}</h2><p class="mu">${esc(r.description)}</p>
+  <div class="tabs">${T.map(t => `<button class="${t[0] === tab ? 'on' : ''}" onclick="openCourse('${id}','${t[0]}')">${lockOf(t[0]) ? '🔒 ' : ''}${t[1]}</button>`).join('')}</div><div id="tab"></div>`);
+  if (tab === 'docs') docsTab(id);
+  else if (tab === 'chat') chat(id);
+  else testHome(id, tab);
+}
+
+/* ---------- Documents : lecture obligatoire ---------- */
+// Ordre imposé : pré-test → documents (tous ouverts, lus et marqués) → post-test. Le serveur applique les mêmes règles.
+const lockOf = t => t === 'docs' ? cur.verrous.docs : t === 'Post-test' ? cur.verrous.post && !cur.resultats['Post-test'] : false;
+function docsTab(id) {
+  if (cur.verrous.docs) return $('#tab').innerHTML = `<div class="card"><b>🔒 Documents verrouillés</b><p class="mu">Passez d’abord le pré-test : les documents du cours s’afficheront ensuite.</p><button onclick="openCourse('${id}','Pré-test')">Aller au pré-test</button></div>`;
+  const L = cur.lecture, docs = cur.documents;
+  const bar = L.total ? `<div class="card"><b>Documents lus : ${L.lus} / ${L.total}</b><p class="mu">${L.lus === L.total
+    ? 'Tous les documents sont marqués comme lus : le post-test est débloqué.'
+    : 'Ouvrez chaque document, lisez-le en entier, puis cliquez sur « J’ai lu ce document en entier ». Le post-test s’ouvrira quand tous seront marqués.'}</p>${L.lus === L.total && cur.nbQuestions['Post-test'] && !cur.resultats['Post-test'] ? `<button onclick="openCourse('${id}','Post-test')">Passer au post-test</button>` : ''}</div>` : '';
+  $('#tab').innerHTML = bar + cur.blocs.map(b => `<div class="card">${b.titre ? '<b>' + esc(b.titre) + '</b><br>' : ''}${esc(b.texte).replace(/\n/g, '<br>')}</div>`).join('')
+    + docs.map(d => `<div class="card">📄 <a href="${esc(d.url)}" target="_blank" rel="noopener" onclick="docOpened('${id}','${d.id}')">${esc(d.titre)}</a>
+      <div id="dz_${d.id}">${docState(id, d)}</div></div>`).join('')
+    || '<p class="mu">Aucun contenu pour le moment.</p>';
+}
+function docState(cid, d) {
+  return d.lu ? '<span class="ok">✔ Lu et marqué</span>'
+    : `<button class="s" id="mk_${d.id}" ${d.ouvert ? '' : 'disabled style="opacity:.5"'} onclick="docRead('${cid}','${d.id}')">J’ai lu ce document en entier</button>${d.ouvert ? '' : ' <span class="mu">Ouvrez le document d’abord.</span>'}`;
+}
+async function docOpened(cid, did) {
+  const d = cur.documents.filter(x => x.id === did)[0]; if (!d || d.ouvert) return;
+  const r = await api('openDoc', tok, cid, did); if (!r.ok) return;
+  d.ouvert = true; const z = $('#dz_' + did); if (z) z.innerHTML = docState(cid, d);
+}
+async function docRead(cid, did) {
+  if (!confirm('Confirmez-vous avoir lu ce document en entier ?')) return;
+  const r = await api('markDoc', tok, cid, did); if (!r.ok) return alert(r.message);
+  openCourse(cid, 'docs');
+}
+
+/* ---------- Tests ---------- */
+let curTest = null, sending = false;
+function testHome(id, ph) {
+  const res = cur.resultats[ph], n = cur.nbQuestions[ph];
+  if (!res && lockOf(ph)) return $('#tab').innerHTML = `<div class="card"><b>🔒 Post-test verrouillé</b><p class="mu">${cur.verrous.preManquant ? 'Passez d’abord le pré-test, puis lisez et marquez tous les documents du cours.'
+    : `Il vous reste ${cur.verrous.docsManquants} document(s) à ouvrir, lire en entier et marquer comme lu(s) (${cur.lecture.lus} / ${cur.lecture.total}).`}</p><button onclick="openCourse('${id}','${cur.verrous.preManquant ? 'Pré-test' : 'docs'}')">${cur.verrous.preManquant ? 'Aller au pré-test' : 'Aller aux documents'}</button></div>`;
+  $('#tab').innerHTML = res ? `<div class="card"><b>${ph} terminé</b><p class="ok">Score : ${res.score} / ${res.total}</p></div>`
+    : n ? `<div class="card"><p>${n} question(s), 25 minutes. Vous ne pouvez passer ce test qu’une fois ; votre pseudonyme (<b>${esc(pseudo)}</b>) est votre code de travail.</p><button onclick="startTest('${id}','${ph}')">Commencer le ${ph.toLowerCase()}</button></div>`
+    : '<p class="mu">Ce test n’est pas encore prêt.</p>';
+}
+const tbl = (head, rows) => `<div style="overflow-x:auto"><table><tr>${head.map(x => `<th>${esc(x)}</th>`).join('')}</tr>${rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table></div>`;
+const rptTable = r => tbl(['', '< 5 ans M', '< 5 ans F', '≥ 5 ans M', '≥ 5 ans F', 'Total'], r.map((l, i) => [['Suspects', 'Décès', 'Confirmés'][i]].concat(l)));
+function chartSvg(t, d) {
+  const W = 240, H = 120, m = 10, mx = Math.max(...d), n = d.length, bw = (W - 2 * m) / n, y = v => H - m - v / mx * (H - 2 * m), x = i => m + bw * (i + .5), C = '#0b6e4f'; let g = '';
+  if (t === 'pie') { const tot = d.reduce((a, b) => a + b, 0), cx = W / 2, cy = H / 2, r = H / 2 - 6; let a0 = -Math.PI / 2;
+    d.forEach((v, i) => { if (!v) return; const a1 = a0 + 2 * Math.PI * v / tot; g += `<path d="M${cx},${cy}L${cx + r * Math.cos(a0)},${cy + r * Math.sin(a0)}A${r},${r} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${cx + r * Math.cos(a1)},${cy + r * Math.sin(a1)}Z" fill="hsl(${i * 30},55%,55%)" stroke="#fff"/>`; a0 = a1; }); }
+  else if (t === 'histo') d.forEach((v, i) => g += `<rect x="${m + bw * i}" y="${y(v)}" width="${bw}" height="${H - m - y(v)}" fill="${C}" stroke="#fff" stroke-width=".5"/>`);
+  else if (t === 'bars') d.forEach((v, i) => g += `<rect x="${m + bw * i + bw * .2}" y="${y(v)}" width="${bw * .6}" height="${H - m - y(v)}" fill="${C}"/>`);
+  else if (t === 'line') g = `<polyline fill="none" stroke="${C}" stroke-width="2" points="${d.map((v, i) => x(i) + ',' + y(v)).join(' ')}"/>` + d.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="2.5" fill="${C}"/>`).join('');
+  else { let p = `M${x(0)},${y(d[0])}`; for (let i = 1; i < n; i++) { const c = (x(i - 1) + x(i)) / 2; p += `C${c},${y(d[i - 1])} ${c},${y(d[i])} ${x(i)},${y(d[i])}`; } g = `<path d="${p}" fill="none" stroke="${C}" stroke-width="2"/>`; }
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:240px;background:#fff;border:1px solid #ccc;border-radius:6px">${t === 'pie' ? '' : `<line x1="${m}" y1="${H - m}" x2="${W - m}" y2="${H - m}" stroke="#888"/>`}${g}</svg>`;
+}
+function renderQ(q, n) {
+  let s = `<div class="card" data-q="${q.id}" data-t="${q.type}"><b>${n + 1}. ${esc(q.q)}</b>`;
+  if (q.ctx) s += `<p class="mu">${esc(q.ctx)}</p>`;
+  if (q.ctxTable) s += tbl(q.ctxTable.head, q.ctxTable.rows);
+  if (q.rptDisease) s += `<p class="mu">Ligne du rapport : ${esc(q.rptDisease)}</p>`;
+  if (q.type === 'dates') s += q.dates.map(d => `<div><label>${esc(d.label)}</label><select data-k="${d.k}"><option value="">—</option>${d.o.map((t, i) => `<option value="${i}">${esc(t)}</option>`).join('')}</select></div>`).join('');
+  else if (q.type === 'match') s += q.rows.map((l, i) => `<div style="margin:6px 0"><b>${esc(l)}</b><br><select data-r="${i}" data-c="0"><option value="">Prélèvement…</option>${q.pre.map((t, j) => `<option value="${j}">${esc(t)}</option>`).join('')}</select>
+    <select data-r="${i}" data-c="1"><option value="">Contenant…</option>${q.tubes.map((t, j) => `<option value="${j}">${esc(t.t)}</option>`).join('')}</select></div>`).join('');
+  else s += (q.multi ? '<div class="mu">Plusieurs réponses possibles</div>' : '') + q.o.map(o => `<label class="o"><input type="${q.multi ? 'checkbox' : 'radio'}" name="q${q.id}" value="${o.i}">${o.chart ? chartSvg(o.chart, q.chartData) : o.rpt ? rptTable(o.rpt) : esc(o.t)}</label>`).join('');
+  return s + '</div>';
+}
+async function startTest(id, ph) {
+  const r = await api('startTest', tok, id, ph); if (!r.ok) return alert(r.message);
+  curTest = { id, ph }; sending = false; let left = r.limitSec;
+  $('#tab').innerHTML = `<div class="card"><b>Code de travail (pseudonyme) : ${esc(r.pseudo)}</b><div class="mu">Temps restant : <span id="cd"></span>. À la fin du temps, vos réponses partent automatiquement ; une question sans réponse compte comme fausse.</div></div>`
+    + r.questions.map(renderQ).join('') + `<button onclick="sendTest()">Envoyer mes réponses</button>`;
+  const tick = () => { if ($('#cd')) $('#cd').textContent = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0'); if (left-- <= 0) { clearInterval(tmr); sendTest(); } };
+  tick(); tmr = setInterval(tick, 1000);
+}
+async function sendTest() {
+  if (sending || !curTest) return; sending = true; clearInterval(tmr);
+  const rep = {};
+  document.querySelectorAll('[data-q]').forEach(c => { const t = c.dataset.t, id = c.dataset.q;
+    if (t === 'dates') { const o = {}; c.querySelectorAll('select[data-k]').forEach(s => o[s.dataset.k] = s.value); rep[id] = o; }
+    else if (t === 'match') { const a = []; c.querySelectorAll('select[data-r]').forEach(s => { (a[+s.dataset.r] = a[+s.dataset.r] || ['', ''])[+s.dataset.c] = s.value; }); rep[id] = a; }
+    else rep[id] = [...c.querySelectorAll('input:checked')].map(i => +i.value); });
+  const r = await api('submitTest', tok, curTest.id, curTest.ph, rep); if (!r.ok) { sending = false; return alert(r.message); }
+  cur.resultats[curTest.ph] = { score: r.score, total: r.total };
+  $('#tab').innerHTML = `<div class="card"><h3 class="ok">Score : ${r.score} / ${r.total}</h3><div class="mu">Code de travail : ${esc(r.pseudo)}</div></div>` + r.corrige.map(c => `<div class="card"><b>${esc(c.q)}</b>
+    <div class="${c.ok ? 'ok' : 'er'}">${c.ok ? '✔ Correct' : '✘ Incorrect'}</div>${c.bonnes.length ? `<div class="mu">Bonne réponse : ${c.bonnes.map(esc).join(' ; ')}</div>` : ''}<div>${esc(c.explication)}</div></div>`).join('')
+    + (curTest.ph === 'Pré-test' ? `<button onclick="openCourse('${curTest.id}','docs')">Accéder aux documents du cours</button>` : '');
+}
+
+/* ---------- Discussion ---------- */
+async function chat(id) {
+  $('#tab').innerHTML = `<div id="ms"></div><textarea id="tx" rows="2" placeholder="Votre message…" maxlength="1000"></textarea><button onclick="send('${id}')">Envoyer</button>`;
+  const load = async () => {
+    const r = await api('getMessages', tok, id); if (!r.ok || !$('#ms')) return;
+    $('#ms').innerHTML = r.messages.map(m => `<div class="msg ${m.mine ? 'me' : ''}"><b>${esc(m.pseudo)}</b> <span class="mu">${new Date(m.date).toLocaleString('fr-FR')}</span><br>${esc(m.texte).replace(/\n/g, '<br>')}
+      ${m.mine ? `<br><button class="l" onclick="editMsg('${m.id}','${id}')">Modifier</button><button class="l" onclick="delMsg('${m.id}','${id}')">Supprimer</button>` : ''}</div>`).join('') || '<p class="mu">Soyez le premier à écrire.</p>';
+  };
+  window.reloadChat = load; await load(); timer = setInterval(load, 15000);
+}
+async function send(id) { const t = $('#tx').value; if (!t.trim()) return; const r = await api('postMessage', tok, id, t); r.ok ? ($('#tx').value = '', reloadChat()) : fail(r); }
+async function editMsg(m, id) { const t = prompt('Modifier le message :'); if (t) { await api('editMessage', tok, m, t); reloadChat(); } }
+async function delMsg(m, id) { if (confirm('Supprimer ce message ?')) { await api('deleteMessage', tok, m); reloadChat(); } }
+
+/* ---------- Administrateur ---------- */
+function admin() {
+  nav(); view(`<div class="card"><h2>Espace administrateur</h2><input id="aw" type="password" placeholder="Mot de passe administrateur"><p id="m" class="er"></p>
+  <button onclick="adminIn()">Entrer</button> <button class="s" onclick="tok?home():auth()">Retour</button></div>`);
+}
+async function adminIn() { adminPw = $('#aw').value; const r = await api('adminLogin', adminPw); r.ok ? adminHome() : ($('#m').textContent = r.message); }
+async function adminHome() {
+  const r = await api('adminOverview', adminPw); if (!r.ok) return alert(r.message);
+  view(`<h2>Administration</h2><div class="card"><h3>Nouveau cours</h3><input id="ct" placeholder="Titre"><textarea id="cd" rows="2" placeholder="Description"></textarea><button onclick="newCourse()">Créer le cours</button>
+  <button class="s" onclick="importMPE()">Importer le cours MPE (20 questions)</button></div>
+  ${r.cours.map(c => `<div class="card"><b>${esc(c.titre)}</b> ${c.actif ? '' : '<span class="er">(masqué)</span>'}<p class="mu">${c.inscrits} inscrit(s) · ${c.documents} document(s) · ${c.pre} Q pré-test · ${c.post} Q post-test · moyenne pré ${c.moyPre ?? '–'} % / post ${c.moyPost ?? '–'} %</p>
+  <button class="s" onclick="adminCourse('${c.id}')">Gérer / modifier</button> <button class="l" onclick="delCourse('${c.id}')">Supprimer</button></div>`).join('')}
+  <p class="mu">Les utilisateurs et leurs mots de passe sont dans l’onglet « Users » du Google Sheet, modifiables à la main.</p>`);
+}
+async function newCourse() { const r = await api('adminSaveCourse', adminPw, { titre: $('#ct').value, description: $('#cd').value }); r.ok ? adminCourse(r.id) : alert(r.message); }
+async function importMPE() { if (!confirm('Importer le cours MPE avec ses 20 questions en pré-test et en post-test ?')) return; const r = await api('adminImporterMPE', adminPw); alert(r.message || 'Fait.'); adminHome(); }
+async function saveCourse(id) {
+  const r = await api('adminSaveCourse', adminPw, { id, titre: $('#ct').value, description: $('#cd').value, actif: $('#ca').checked });
+  r.ok ? (alert('Enregistré.'), adminCourse(id)) : alert(r.message);
+}
+async function delCourse(id) {
+  if (!confirm('Supprimer ce cours DÉFINITIVEMENT ? Ses documents, questions, inscriptions, résultats et messages seront aussi supprimés. (Pour seulement le cacher, décochez « visible » dans « Gérer / modifier ».)')) return;
+  const r = await api('adminDeleteCourse', adminPw, id); r.ok ? adminHome() : alert(r.message);
+}
+let admDet = null;
+async function edit(t, rid, cid) {
+  const g = (admDet[{ Documents: 'documents', Blocs: 'blocs', Questions: 'questions' }[t]] || []).filter(x => x.id === rid)[0]; if (!g) return;
+  const ch = {};
+  if (t === 'Documents') { const a = prompt('Titre du document :', g.titre); if (a === null) return; const b = prompt('Lien :', g.url); if (b === null) return; ch.titre = a; ch.url = b; }
+  else if (t === 'Blocs') { const a = prompt('Titre (facultatif) :', g.titre); if (a === null) return; const b = prompt('Texte :', g.texte); if (b === null) return; ch.titre = a; ch.texte = b; }
+  else { const a = prompt('Question :', g.question); if (a === null) return; const b = prompt('Explication :', g.explication || ''); if (b === null) return; ch.question = a; ch.explication = b; }
+  const r = await api('adminUpdate', adminPw, t, rid, ch); r.ok ? adminCourse(cid) : alert(r.message);
+}
+async function del(table, rid, cid) { if (confirm('Supprimer cet élément ?')) { await api('adminDelete', adminPw, table, rid); adminCourse(cid); } }
+async function adminCourse(id) {
+  const r = await api('adminCourseDetail', adminPw, id); if (!r.ok) return alert(r.message);
+  admDet = r; const c = r.cours, row = (t, rid, label) => `<div class="msg">${label} <button class="l" onclick="edit('${t}','${rid}','${id}')">Modifier</button><button class="l" onclick="del('${t}','${rid}','${id}')">Supprimer</button></div>`;
+  view(`<button class="s" onclick="adminHome()">← Retour</button><h2>${esc(c.titre)}</h2>
+  <div class="card"><h3>Informations du cours</h3><input id="ct" value="${esc(c.titre)}"><textarea id="cd" rows="3" placeholder="Description">${esc(c.description)}</textarea>
+  <label class="o"><input type="checkbox" id="ca" ${c.actif ? 'checked' : ''}> Cours visible par les utilisateurs</label><button onclick="saveCourse('${id}')">Enregistrer</button></div>
+  <div class="card"><h3>Texte sur la page du cours</h3>${r.blocs.map(b => row('Blocs', b.id, '<b>' + esc(b.titre) + '</b> ' + esc(b.texte).slice(0, 80))).join('')}
+  <input id="bt" placeholder="Titre (facultatif)"><textarea id="bx" rows="3" placeholder="Texte : objectifs, consignes, résumé…"></textarea><button onclick="addBloc('${id}')">Ajouter</button></div>
+  <div class="card"><h3>Documents</h3>${r.documents.map(d => row('Documents', d.id, '📄 ' + esc(d.titre))).join('')}
+  <input id="dt" placeholder="Titre du document"><input id="du" placeholder="Lien (Drive, YouTube, site…)"><input id="df" type="file"><button onclick="addDoc('${id}')">Ajouter</button></div>
+  <div class="card"><h3>Questions (${r.questions.length})</h3><div style="max-height:220px;overflow:auto">${r.questions.map(q => row('Questions', q.id, `<span class="mu">${q.phase} · ${q.type}</span> ${esc(q.question).slice(0, 70)}`)).join('')}</div>
+  <select id="qp"><option>Pré-test</option><option>Post-test</option></select><textarea id="qq" rows="2" placeholder="Question"></textarea><textarea id="qo" rows="4" placeholder="Un choix par ligne"></textarea>
+  <input id="qb" placeholder="Numéros des bonnes réponses, ex. 2 ou 1,3"><textarea id="qe" rows="2" placeholder="Explication (affichée après le test)"></textarea><button onclick="addQ('${id}')">Ajouter la question</button></div>
+  <div class="card"><h3>Importer des questions (fichier CSV)</h3><p class="mu">Colonnes : phase, type, question, options, bonnes, explication, donnees.</p>
+  <input id="qf" type="file" accept=".csv,.txt"><label class="o"><input type="checkbox" id="qr"> Remplacer les questions déjà présentes pour les phases du fichier</label><button onclick="importQ('${id}')">Importer le fichier</button></div>
+  <div class="card"><button class="l" onclick="delCourse('${id}')">Supprimer tout ce cours</button></div>
+  <div class="card"><h3>Résultats (code de travail = pseudonyme)</h3>${r.resultats.length ? tbl(['Pseudonyme', 'Test', 'Score', 'Date'], r.resultats.map(x => [x.pseudo, x.phase, x.score + '/' + x.total, new Date(x.date).toLocaleDateString('fr-FR')])) : '<p class="mu">Aucun résultat.</p>'}</div>`);
+}
+function parseCSV(t) {
+  t = t.replace(/^\uFEFF/, ''); const first = t.split('\n')[0];
+  const d = [';', '\t', ','].map(c => [c, first.split(c).length]).sort((a, b) => b[1] - a[1])[0][0];
+  const rows = []; let r = [], f = '', q = false;
+  for (let i = 0; i < t.length; i++) { const c = t[i];
+    if (q) { if (c === '"') { if (t[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true; else if (c === d) { r.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && t[i + 1] === '\n') i++; r.push(f); f = ''; rows.push(r); r = []; } else f += c; }
+  if (f || r.length) { r.push(f); rows.push(r); }
+  const h = rows.shift().map(x => x.trim().toLowerCase());
+  return rows.filter(x => x.some(y => y.trim())).map(x => Object.fromEntries(h.map((k, i) => [k, x[i] || ''])));
+}
+async function importQ(id) {
+  const f = $('#qf').files[0]; if (!f) return alert('Choisissez un fichier CSV.');
+  let lignes; try { lignes = parseCSV(await f.text()); } catch (e) { return alert('Fichier illisible.'); }
+  const r = await api('adminImportQuestions', adminPw, id, lignes, $('#qr').checked); if (!r.ok) return alert(r.message);
+  alert(r.ajoutees + ' question(s) importée(s).' + (r.erreurs.length ? '\n\nÀ corriger :\n' + r.erreurs.join('\n') : '')); adminCourse(id);
+}
+async function addBloc(id) { const r = await api('adminAddBloc', adminPw, id, $('#bt').value, $('#bx').value); r.ok ? adminCourse(id) : alert(r.message); }
+async function addDoc(id) {
+  const doc = { titre: $('#dt').value, url: $('#du').value }, f = $('#df').files[0];
+  if (f) doc.fichier = { nom: f.name, mime: f.type || 'application/octet-stream', b64: await new Promise(ok => { const x = new FileReader(); x.onload = () => ok(x.result.split(',')[1]); x.readAsDataURL(f); }) };
+  const r = await api('adminAddDoc', adminPw, id, doc); r.ok ? adminCourse(id) : alert(r.message);
+}
+async function addQ(id) {
+  const q = { phase: $('#qp').value, question: $('#qq').value, options: $('#qo').value.split('\n'), explication: $('#qe').value,
+    bonnes: $('#qb').value.split(/[,;\s]+/).filter(Boolean).map(n => n - 1) };
+  const r = await api('adminAddQuestion', adminPw, id, q); r.ok ? adminCourse(id) : alert(r.message);
+}
+
+/* ---------- Application installable (PWA) ---------- */
+let evInstall = null;
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+if (!standalone) {
+  if (ios) $('#inst').style.display = '';
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); evInstall = e; $('#inst').style.display = ''; });
+}
+async function installApp() {
+  if (evInstall) { evInstall.prompt(); await evInstall.userChoice; evInstall = null; $('#inst').style.display = 'none'; }
+  else alert('Sur iPhone : touchez le bouton Partager de Safari, puis « Sur l’écran d’accueil ».');
+}
+window.addEventListener('appinstalled', () => { $('#inst').style.display = 'none'; });
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+tok ? home() : auth();
+</script>
+</body>
+</html>

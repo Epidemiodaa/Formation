@@ -20,14 +20,16 @@ const TABS = {
   Blocs: ['id', 'cours', 'titre', 'texte'],
   Inscriptions: ['uid', 'pseudo', 'cours', 'date'],
   Resultats: ['date', 'uid', 'pseudo', 'cours', 'phase', 'score', 'total'],
-  Messages: ['id', 'date', 'cours', 'uid', 'pseudo', 'texte']
+  Messages: ['id', 'date', 'cours', 'uid', 'pseudo', 'texte'],
+  // Lectures : une ligne par utilisateur et par document ; ouvert = date d'ouverture du lien, lu = date où l'utilisateur l'a marqué « lu en entier »
+  Lectures: ['uid', 'cours', 'doc', 'ouvert', 'lu']
 };
 const PHASES = ['Pré-test', 'Post-test'];
 
-const API = { login, me, profil, updateProfile, enroll, unenroll, course, startTest, submitTest,
+const API = { login, me, profil, updateProfile, enroll, unenroll, course, openDoc, markDoc, startTest, submitTest,
   getMessages, postMessage, editMessage, deleteMessage,
   adminLogin, adminOverview, adminSaveCourse, adminAddDoc, adminAddQuestion,
-  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE: adminImporterMPE_, adminDeleteCourse, adminUpdate };
+  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE: adminImporterMPE_, adminDeleteCourse, adminUpdate, adminImportQuestions };
 
 function doPost(e) {
   try {
@@ -136,16 +138,49 @@ function unenroll(tok, cid) {
     .forEach(i => sh_('Inscriptions').deleteRow(i._r));
   return { ok: true };
 }
+/** Verrous d'un cours pour un utilisateur : 1) pré-test avant les documents ; 2) tous les documents lus et marqués avant le post-test.
+ *  Un cours sans question de pré-test n'impose pas ce verrou (sinon l'apprenant serait bloqué). */
+function lectures_(uid, cid) {
+  const m = {}; rows_('Lectures').filter(l => S(l.uid) === S(uid) && S(l.cours) === S(cid)).forEach(l => m[S(l.doc)] = l); return m;
+}
+function gates_(uid, cid) {
+  const preOk = !questions_(cid, 'Pré-test').length || done_(uid, cid, 'Pré-test');
+  const docs = rows_('Documents').filter(d => S(d.cours) === S(cid)), lec = lectures_(uid, cid);
+  const lus = docs.filter(d => lec[S(d.id)] && lec[S(d.id)].lu).length;
+  return { preOk, docs, lec, lus, tous: lus === docs.length, postOk: preOk && lus === docs.length };
+}
 function course(tok, cid) {
   const u = auth_(tok), c = activeCourse_(cid); needEnrolled_(u, cid);
   const qs = rows_('Questions').filter(q => S(q.cours) === S(cid));
   const res = {};
   rows_('Resultats').filter(r => S(r.uid) === S(u.id) && S(r.cours) === S(cid)).forEach(r => res[r.phase] = { score: r.score, total: r.total });
+  const g = gates_(u.id, cid);
   return { ok: true, id: S(c.id), titre: c.titre, description: c.description,
-    blocs: rows_('Blocs').filter(b => S(b.cours) === S(cid)).map(b => ({ titre: b.titre, texte: b.texte })),
-    documents: rows_('Documents').filter(d => S(d.cours) === S(cid)).map(d => ({ titre: d.titre, url: d.url })),
+    // Contenu du cours envoyé seulement une fois le pré-test passé
+    blocs: g.preOk ? rows_('Blocs').filter(b => S(b.cours) === S(cid)).map(b => ({ titre: b.titre, texte: b.texte })) : [],
+    documents: g.preOk ? g.docs.map(d => { const l = g.lec[S(d.id)]; return { id: S(d.id), titre: d.titre, url: d.url, ouvert: !!(l && l.ouvert), lu: !!(l && l.lu) }; }) : [],
+    verrous: { docs: !g.preOk, post: !g.postOk, preManquant: !g.preOk, docsManquants: g.preOk ? g.docs.length - g.lus : g.docs.length },
+    lecture: { lus: g.lus, total: g.docs.length },
     nbQuestions: { 'Pré-test': qs.filter(q => q.phase === 'Pré-test').length, 'Post-test': qs.filter(q => q.phase === 'Post-test').length },
     resultats: res };
+}
+/** Enregistre l'ouverture d'un document (condition pour pouvoir le marquer comme lu). */
+function openDoc(tok, cid, did) { return lecture_(tok, cid, did, 'ouvert'); }
+/** Marque un document comme lu en entier (seulement s'il a été ouvert). */
+function markDoc(tok, cid, did) { return lecture_(tok, cid, did, 'lu'); }
+function lecture_(tok, cid, did, etape) {
+  const u = auth_(tok); activeCourse_(cid); needEnrolled_(u, cid);
+  const lock = LockService.getScriptLock(); lock.waitLock(10000);
+  try {
+    if (!gates_(u.id, cid).preOk) return { ok: false, message: 'Passez d’abord le pré-test.' };
+    if (!rows_('Documents').some(d => S(d.id) === S(did) && S(d.cours) === S(cid))) return { ok: false, message: 'Document introuvable.' };
+    let l = lectures_(u.id, cid)[S(did)];
+    if (!l) { add_('Lectures', { uid: u.id, cours: S(cid), doc: S(did), ouvert: etape === 'ouvert' ? new Date() : '', lu: '' }); l = lectures_(u.id, cid)[S(did)]; if (etape === 'ouvert') return { ok: true }; }
+    if (etape === 'ouvert') { if (!l.ouvert) set_('Lectures', l._r, 'ouvert', new Date()); }
+    else { if (!l.ouvert) return { ok: false, message: 'Ouvrez d’abord le document pour pouvoir le marquer comme lu.' }; if (!l.lu) set_('Lectures', l._r, 'lu', new Date()); }
+    const g = gates_(u.id, cid);
+    return { ok: true, lus: g.lus, total: g.docs.length, postOk: g.postOk };
+  } finally { lock.releaseLock(); }
 }
 
 /* ---------- Tests ---------- */
@@ -180,11 +215,18 @@ function bonnes_(q) {
   if (t === 'rpt') return [];
   return JSON.parse(q.bonnes).map(i => { const x = JSON.parse(q.options)[i]; return typeof x === 'string' ? x : x.t; });
 }
+/** Raison pour laquelle le post-test est fermé (chaîne vide = accessible). */
+function postBlock_(uid, cid) {
+  const g = gates_(uid, cid);
+  if (!g.preOk) return 'Passez d’abord le pré-test.';
+  if (!g.tous) return 'Lisez et marquez tous les documents du cours (' + g.lus + '/' + g.docs.length + ') avant le post-test.';
+  return '';
+}
 function startTest(tok, cid, phase) {
   const u = auth_(tok); activeCourse_(cid); needEnrolled_(u, cid);
   if (PHASES.indexOf(phase) < 0) return { ok: false, message: 'Phase inconnue.' };
   if (done_(u.id, cid, phase)) return { ok: false, message: 'Vous avez déjà passé ce test.' };
-  if (phase === 'Post-test' && !done_(u.id, cid, 'Pré-test')) return { ok: false, message: 'Passez d’abord le pré-test.' };
+  if (phase === 'Post-test') { const e = postBlock_(u.id, cid); if (e) return { ok: false, message: e }; }
   const qs = questions_(cid, phase);
   if (!qs.length) return { ok: false, message: 'Aucune question n’a encore été ajoutée.' };
   return { ok: true, pseudo: S(u.pseudo), limitSec: 25 * 60, questions: shuffle_(qs.map(qOut_)) };
@@ -193,7 +235,7 @@ function startTest(tok, cid, phase) {
 function submitTest(tok, cid, phase, reponses) {
   const u = auth_(tok); needEnrolled_(u, cid);
   if (done_(u.id, cid, phase)) return { ok: false, message: 'Vous avez déjà passé ce test.' };
-  if (phase === 'Post-test' && !done_(u.id, cid, 'Pré-test')) return { ok: false, message: 'Passez d’abord le pré-test.' };
+  if (phase === 'Post-test') { const e = postBlock_(u.id, cid); if (e) return { ok: false, message: e }; }
   const qs = questions_(cid, phase); let score = 0;
   const corr = qs.map(q => {
     const ok = grade_(q, (reponses || {})[S(q.id)]); if (ok) score++;
@@ -303,7 +345,7 @@ function adminImporterMPE_(pw) {
 function adminDeleteCourse(pw, cid) {
   admin_(pw);
   const n = {};
-  ['Documents', 'Blocs', 'Questions', 'Inscriptions', 'Resultats', 'Messages'].forEach(t => {
+  ['Documents', 'Blocs', 'Questions', 'Inscriptions', 'Resultats', 'Messages', 'Lectures'].forEach(t => {
     const r = rows_(t).filter(x => S(x.cours) === S(cid)).reverse(); r.forEach(x => sh_(t).deleteRow(x._r)); n[t] = r.length;
   });
   const c = rows_('Cours').filter(x => S(x.id) === S(cid))[0];
@@ -325,4 +367,36 @@ function adminUpdate(pw, table, id, champs) {
     set_(table, r._r, k, v);
   }
   return { ok: true };
+}
+/** Import de questions depuis un fichier CSV lu par la page. lignes : [{phase,type,question,options,bonnes,explication,donnees}] ; bonnes = numéros à partir de 1. */
+function adminImportQuestions(pw, cid, lignes, remplacer) {
+  admin_(pw); activeCourse_(cid);
+  const TYPES = ['single', 'multi', 'chart', 'rpt', 'dates', 'match'], bons = [], err = [];
+  (lignes || []).forEach((l, i) => {
+    try {
+      const phase = S(l.phase).trim(), type = S(l.type || '').trim() || 'single', question = S(l.question).trim();
+      if (PHASES.indexOf(phase) < 0) throw new Error('phase inconnue (« Pré-test » ou « Post-test »)');
+      if (TYPES.indexOf(type) < 0) throw new Error('type inconnu');
+      if (!question) throw new Error('question vide');
+      const o = S(l.options || '').trim();
+      const options = !o ? [] : (o[0] === '[' ? JSON.parse(o) : o.split('|').map(x => x.trim()).filter(Boolean));
+      const bonnes = S(l.bonnes || '').split(/[,;\s]+/).filter(Boolean).map(n => Number(n) - 1);
+      const d = S(l.donnees || '').trim() ? JSON.parse(l.donnees) : {};
+      if (['dates'].indexOf(type) >= 0 && !(d.dates && d.dates.length)) throw new Error('« donnees » doit contenir les dates');
+      if (type === 'match' && !(d.pre && d.tubes && d.rows)) throw new Error('« donnees » doit contenir pre, tubes et rows');
+      if (type !== 'dates' && type !== 'match') {
+        if (options.length < 2) throw new Error('au moins 2 choix');
+        if (!bonnes.length || bonnes.some(b => !(b >= 0 && b < options.length))) throw new Error('numéros de bonnes réponses invalides');
+        if (type !== 'multi' && bonnes.length !== 1) throw new Error('une seule bonne réponse attendue');
+      }
+      bons.push({ phase, type, question, options, bonnes: (type === 'dates' || type === 'match') ? [] : bonnes, donnees: d, explication: S(l.explication || '') });
+    } catch (e) { err.push('Ligne ' + (i + 2) + ' : ' + e.message); }
+  });
+  if (remplacer && bons.length) {
+    const ph = {}; bons.forEach(b => ph[b.phase] = 1);
+    rows_('Questions').filter(q => S(q.cours) === S(cid) && ph[q.phase]).reverse().forEach(q => sh_('Questions').deleteRow(q._r));
+  }
+  bons.forEach(b => add_('Questions', { id: id_('q'), cours: S(cid), phase: b.phase, type: b.type, question: b.question,
+    options: JSON.stringify(b.options), bonnes: JSON.stringify(b.bonnes), donnees: JSON.stringify(b.donnees), explication: b.explication }));
+  return { ok: true, ajoutees: bons.length, erreurs: err };
 }

@@ -103,21 +103,53 @@ async function saveProfile() {
 async function openCourse(id, tab) {
   view('<p class="mu">Chargement…</p>');
   const r = await api('course', tok, id); if (!r.ok) { fail(r); return home(); }
-  cur = r; tab = tab || 'docs';
+  cur = r; tab = tab || (r.verrous.docs ? 'Pré-test' : 'docs');
   const T = [['docs', 'Documents'], ['Pré-test', 'Pré-test'], ['Post-test', 'Post-test'], ['chat', 'Discussion']];
   view(`<h2>${esc(r.titre)}</h2><p class="mu">${esc(r.description)}</p>
-  <div class="tabs">${T.map(t => `<button class="${t[0] === tab ? 'on' : ''}" onclick="openCourse('${id}','${t[0]}')">${t[1]}</button>`).join('')}</div><div id="tab"></div>`);
-  if (tab === 'docs') $('#tab').innerHTML = r.blocs.map(b => `<div class="card">${b.titre ? '<b>' + esc(b.titre) + '</b><br>' : ''}${esc(b.texte).replace(/\n/g, '<br>')}</div>`).join('')
-    + r.documents.map(d => `<div class="card">📄 <a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.titre)}</a></div>`).join('')
-    || '<p class="mu">Aucun contenu pour le moment.</p>';
+  <div class="tabs">${T.map(t => `<button class="${t[0] === tab ? 'on' : ''}" onclick="openCourse('${id}','${t[0]}')">${lockOf(t[0]) ? '🔒 ' : ''}${t[1]}</button>`).join('')}</div><div id="tab"></div>`);
+  if (tab === 'docs') docsTab(id);
   else if (tab === 'chat') chat(id);
   else testHome(id, tab);
+}
+
+/* ---------- Documents : lecture obligatoire ---------- */
+// Ordre imposé : pré-test → documents (tous ouverts, lus et marqués) → post-test. Le serveur applique les mêmes règles.
+const lockOf = t => t === 'docs' ? cur.verrous.docs : t === 'Post-test' ? cur.verrous.post && !cur.resultats['Post-test'] : false;
+function docsTab(id) {
+  if (cur.verrous.docs) return $('#tab').innerHTML = `<div class="card"><b>🔒 Documents verrouillés</b><p class="mu">Passez d’abord le pré-test : les documents du cours s’afficheront ensuite.</p><button onclick="openCourse('${id}','Pré-test')">Aller au pré-test</button></div>`;
+  const L = cur.lecture, docs = cur.documents;
+  const bar = L.total ? `<div class="card"><b>Documents lus : ${L.lus} / ${L.total}</b><p class="mu">${L.lus === L.total
+    ? 'Tous les documents sont marqués comme lus : le post-test est débloqué.'
+    : 'Ouvrez chaque document, lisez-le en entier, puis cliquez sur « J’ai lu ce document en entier ». Le post-test s’ouvrira quand tous seront marqués.'}</p>${L.lus === L.total && cur.nbQuestions['Post-test'] && !cur.resultats['Post-test'] ? `<button onclick="openCourse('${id}','Post-test')">Passer au post-test</button>` : ''}</div>` : '';
+  const req = docs.filter(d => !d.facultatif), opt = docs.filter(d => d.facultatif);
+  const card = d => `<div class="card">📄 <a href="${esc(d.url)}" target="_blank" rel="noopener" ${d.facultatif ? '' : `onclick="docOpened('${id}','${d.id}')"`}>${esc(d.titre)}</a>${d.facultatif ? '' : `
+      <div id="dz_${d.id}">${docState(id, d)}</div>`}</div>`;
+  $('#tab').innerHTML = bar + cur.blocs.map(b => `<div class="card">${b.titre ? '<b>' + esc(b.titre) + '</b><br>' : ''}${esc(b.texte).replace(/\n/g, '<br>')}</div>`).join('')
+    + (req.length ? '<h3>Documents à lire</h3>' + req.map(card).join('') : '')
+    + (opt.length ? '<h3>Ressources complémentaires</h3><p class="mu">Facultatives : à consulter librement, sans effet sur l’accès au post-test.</p>' + opt.map(card).join('') : '')
+    || '<p class="mu">Aucun contenu pour le moment.</p>';
+}
+function docState(cid, d) {
+  return d.lu ? '<span class="ok">✔ Lu et marqué</span>'
+    : `<button class="s" id="mk_${d.id}" ${d.ouvert ? '' : 'disabled style="opacity:.5"'} onclick="docRead('${cid}','${d.id}')">J’ai lu ce document en entier</button>${d.ouvert ? '' : ' <span class="mu">Ouvrez le document d’abord.</span>'}`;
+}
+async function docOpened(cid, did) {
+  const d = cur.documents.filter(x => x.id === did)[0]; if (!d || d.ouvert) return;
+  const r = await api('openDoc', tok, cid, did); if (!r.ok) return;
+  d.ouvert = true; const z = $('#dz_' + did); if (z) z.innerHTML = docState(cid, d);
+}
+async function docRead(cid, did) {
+  if (!confirm('Confirmez-vous avoir lu ce document en entier ?')) return;
+  const r = await api('markDoc', tok, cid, did); if (!r.ok) return alert(r.message);
+  openCourse(cid, 'docs');
 }
 
 /* ---------- Tests ---------- */
 let curTest = null, sending = false;
 function testHome(id, ph) {
   const res = cur.resultats[ph], n = cur.nbQuestions[ph];
+  if (!res && lockOf(ph)) return $('#tab').innerHTML = `<div class="card"><b>🔒 Post-test verrouillé</b><p class="mu">${cur.verrous.preManquant ? 'Passez d’abord le pré-test, puis lisez et marquez tous les documents du cours.'
+    : `Il vous reste ${cur.verrous.docsManquants} document(s) à ouvrir, lire en entier et marquer comme lu(s) (${cur.lecture.lus} / ${cur.lecture.total}).`}</p><button onclick="openCourse('${id}','${cur.verrous.preManquant ? 'Pré-test' : 'docs'}')">${cur.verrous.preManquant ? 'Aller au pré-test' : 'Aller aux documents'}</button></div>`;
   $('#tab').innerHTML = res ? `<div class="card"><b>${ph} terminé</b><p class="ok">Score : ${res.score} / ${res.total}</p></div>`
     : n ? `<div class="card"><p>${n} question(s), 25 minutes. Vous ne pouvez passer ce test qu’une fois ; votre pseudonyme (<b>${esc(pseudo)}</b>) est votre code de travail.</p><button onclick="startTest('${id}','${ph}')">Commencer le ${ph.toLowerCase()}</button></div>`
     : '<p class="mu">Ce test n’est pas encore prêt.</p>';
@@ -163,7 +195,8 @@ async function sendTest() {
   const r = await api('submitTest', tok, curTest.id, curTest.ph, rep); if (!r.ok) { sending = false; return alert(r.message); }
   cur.resultats[curTest.ph] = { score: r.score, total: r.total };
   $('#tab').innerHTML = `<div class="card"><h3 class="ok">Score : ${r.score} / ${r.total}</h3><div class="mu">Code de travail : ${esc(r.pseudo)}</div></div>` + r.corrige.map(c => `<div class="card"><b>${esc(c.q)}</b>
-    <div class="${c.ok ? 'ok' : 'er'}">${c.ok ? '✔ Correct' : '✘ Incorrect'}</div>${c.bonnes.length ? `<div class="mu">Bonne réponse : ${c.bonnes.map(esc).join(' ; ')}</div>` : ''}<div>${esc(c.explication)}</div></div>`).join('');
+    <div class="${c.ok ? 'ok' : 'er'}">${c.ok ? '✔ Correct' : '✘ Incorrect'}</div>${c.bonnes.length ? `<div class="mu">Bonne réponse : ${c.bonnes.map(esc).join(' ; ')}</div>` : ''}<div>${esc(c.explication)}</div></div>`).join('')
+    + (curTest.ph === 'Pré-test' ? `<button onclick="openCourse('${curTest.id}','docs')">Accéder aux documents du cours</button>` : '');
 }
 
 /* ---------- Discussion ---------- */
@@ -208,7 +241,7 @@ let admDet = null;
 async function edit(t, rid, cid) {
   const g = (admDet[{ Documents: 'documents', Blocs: 'blocs', Questions: 'questions' }[t]] || []).filter(x => x.id === rid)[0]; if (!g) return;
   const ch = {};
-  if (t === 'Documents') { const a = prompt('Titre du document :', g.titre); if (a === null) return; const b = prompt('Lien :', g.url); if (b === null) return; ch.titre = a; ch.url = b; }
+  if (t === 'Documents') { const a = prompt('Titre du document :', g.titre); if (a === null) return; const b = prompt('Lien :', g.url); if (b === null) return; ch.titre = a; ch.url = b; ch.facultatif = confirm('Document facultatif (ressource complémentaire) ?\nOK = facultatif, Annuler = à lire obligatoirement'); }
   else if (t === 'Blocs') { const a = prompt('Titre (facultatif) :', g.titre); if (a === null) return; const b = prompt('Texte :', g.texte); if (b === null) return; ch.titre = a; ch.texte = b; }
   else { const a = prompt('Question :', g.question); if (a === null) return; const b = prompt('Explication :', g.explication || ''); if (b === null) return; ch.question = a; ch.explication = b; }
   const r = await api('adminUpdate', adminPw, t, rid, ch); r.ok ? adminCourse(cid) : alert(r.message);
@@ -222,17 +255,37 @@ async function adminCourse(id) {
   <label class="o"><input type="checkbox" id="ca" ${c.actif ? 'checked' : ''}> Cours visible par les utilisateurs</label><button onclick="saveCourse('${id}')">Enregistrer</button></div>
   <div class="card"><h3>Texte sur la page du cours</h3>${r.blocs.map(b => row('Blocs', b.id, '<b>' + esc(b.titre) + '</b> ' + esc(b.texte).slice(0, 80))).join('')}
   <input id="bt" placeholder="Titre (facultatif)"><textarea id="bx" rows="3" placeholder="Texte : objectifs, consignes, résumé…"></textarea><button onclick="addBloc('${id}')">Ajouter</button></div>
-  <div class="card"><h3>Documents</h3>${r.documents.map(d => row('Documents', d.id, '📄 ' + esc(d.titre))).join('')}
-  <input id="dt" placeholder="Titre du document"><input id="du" placeholder="Lien (Drive, YouTube, site…)"><input id="df" type="file"><button onclick="addDoc('${id}')">Ajouter</button></div>
+  <div class="card"><h3>Documents</h3>${r.documents.map(d => row('Documents', d.id, '📄 ' + esc(d.titre) + (d.facultatif ? ' <span class="mu">(facultatif)</span>' : ''))).join('')}
+  <input id="dt" placeholder="Titre du document"><input id="du" placeholder="Lien (Drive, YouTube, site…)"><input id="df" type="file"><label class="o"><input type="checkbox" id="dfac"> Facultatif (ressource complémentaire : pas de lecture obligatoire)</label><button onclick="addDoc('${id}')">Ajouter</button></div>
   <div class="card"><h3>Questions (${r.questions.length})</h3><div style="max-height:220px;overflow:auto">${r.questions.map(q => row('Questions', q.id, `<span class="mu">${q.phase} · ${q.type}</span> ${esc(q.question).slice(0, 70)}`)).join('')}</div>
   <select id="qp"><option>Pré-test</option><option>Post-test</option></select><textarea id="qq" rows="2" placeholder="Question"></textarea><textarea id="qo" rows="4" placeholder="Un choix par ligne"></textarea>
   <input id="qb" placeholder="Numéros des bonnes réponses, ex. 2 ou 1,3"><textarea id="qe" rows="2" placeholder="Explication (affichée après le test)"></textarea><button onclick="addQ('${id}')">Ajouter la question</button></div>
+  <div class="card"><h3>Importer des questions (fichier CSV)</h3><p class="mu">Colonnes : phase, type, question, options, bonnes, explication, donnees.</p>
+  <input id="qf" type="file" accept=".csv,.txt"><label class="o"><input type="checkbox" id="qr"> Remplacer les questions déjà présentes pour les phases du fichier</label><button onclick="importQ('${id}')">Importer le fichier</button></div>
   <div class="card"><button class="l" onclick="delCourse('${id}')">Supprimer tout ce cours</button></div>
   <div class="card"><h3>Résultats (code de travail = pseudonyme)</h3>${r.resultats.length ? tbl(['Pseudonyme', 'Test', 'Score', 'Date'], r.resultats.map(x => [x.pseudo, x.phase, x.score + '/' + x.total, new Date(x.date).toLocaleDateString('fr-FR')])) : '<p class="mu">Aucun résultat.</p>'}</div>`);
 }
+function parseCSV(t) {
+  t = t.replace(/^\uFEFF/, ''); const first = t.split('\n')[0];
+  const d = [';', '\t', ','].map(c => [c, first.split(c).length]).sort((a, b) => b[1] - a[1])[0][0];
+  const rows = []; let r = [], f = '', q = false;
+  for (let i = 0; i < t.length; i++) { const c = t[i];
+    if (q) { if (c === '"') { if (t[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true; else if (c === d) { r.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && t[i + 1] === '\n') i++; r.push(f); f = ''; rows.push(r); r = []; } else f += c; }
+  if (f || r.length) { r.push(f); rows.push(r); }
+  const h = rows.shift().map(x => x.trim().toLowerCase());
+  return rows.filter(x => x.some(y => y.trim())).map(x => Object.fromEntries(h.map((k, i) => [k, x[i] || ''])));
+}
+async function importQ(id) {
+  const f = $('#qf').files[0]; if (!f) return alert('Choisissez un fichier CSV.');
+  let lignes; try { lignes = parseCSV(await f.text()); } catch (e) { return alert('Fichier illisible.'); }
+  const r = await api('adminImportQuestions', adminPw, id, lignes, $('#qr').checked); if (!r.ok) return alert(r.message);
+  alert(r.ajoutees + ' question(s) importée(s).' + (r.erreurs.length ? '\n\nÀ corriger :\n' + r.erreurs.join('\n') : '')); adminCourse(id);
+}
 async function addBloc(id) { const r = await api('adminAddBloc', adminPw, id, $('#bt').value, $('#bx').value); r.ok ? adminCourse(id) : alert(r.message); }
 async function addDoc(id) {
-  const doc = { titre: $('#dt').value, url: $('#du').value }, f = $('#df').files[0];
+  const doc = { titre: $('#dt').value, url: $('#du').value, facultatif: $('#dfac').checked }, f = $('#df').files[0];
   if (f) doc.fichier = { nom: f.name, mime: f.type || 'application/octet-stream', b64: await new Promise(ok => { const x = new FileReader(); x.onload = () => ok(x.result.split(',')[1]); x.readAsDataURL(f); }) };
   const r = await api('adminAddDoc', adminPw, id, doc); r.ok ? adminCourse(id) : alert(r.message);
 }

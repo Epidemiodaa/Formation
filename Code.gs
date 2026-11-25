@@ -13,7 +13,8 @@ const TABS = {
   // Users : l'administrateur voit et modifie pseudo et motdepasse directement ici (id = identifiant stable, ne pas modifier)
   Users: ['id', 'pseudo', 'motdepasse', 'jeton', 'cree'],
   Cours: ['id', 'titre', 'description', 'actif'],
-  Documents: ['id', 'cours', 'titre', 'url'],
+  // facultatif = TRUE : ressource complémentaire, consultable par tous les inscrits mais sans obligation de lecture
+  Documents: ['id', 'cours', 'titre', 'url', 'facultatif'],
   // options = JSON ["A","B"] ; bonnes = JSON [0] (index à partir de 0, plusieurs = choix multiple)
   // type : single | multi | chart | rpt | dates | match ; donnees = JSON (contexte, tableaux, dates, appariements)
   Questions: ['id', 'cours', 'phase', 'type', 'question', 'options', 'bonnes', 'donnees', 'explication'],
@@ -143,11 +144,12 @@ function unenroll(tok, cid) {
 function lectures_(uid, cid) {
   const m = {}; rows_('Lectures').filter(l => S(l.uid) === S(uid) && S(l.cours) === S(cid)).forEach(l => m[S(l.doc)] = l); return m;
 }
+const opt_ = d => d.facultatif === true || S(d.facultatif).toUpperCase() === 'TRUE';
 function gates_(uid, cid) {
   const preOk = !questions_(cid, 'Pré-test').length || done_(uid, cid, 'Pré-test');
-  const docs = rows_('Documents').filter(d => S(d.cours) === S(cid)), lec = lectures_(uid, cid);
-  const lus = docs.filter(d => lec[S(d.id)] && lec[S(d.id)].lu).length;
-  return { preOk, docs, lec, lus, tous: lus === docs.length, postOk: preOk && lus === docs.length };
+  const docs = rows_('Documents').filter(d => S(d.cours) === S(cid)), lec = lectures_(uid, cid), req = docs.filter(d => !opt_(d));
+  const lus = req.filter(d => lec[S(d.id)] && lec[S(d.id)].lu).length;
+  return { preOk, docs, req, lec, lus, tous: lus === req.length, postOk: preOk && lus === req.length };
 }
 function course(tok, cid) {
   const u = auth_(tok), c = activeCourse_(cid); needEnrolled_(u, cid);
@@ -158,9 +160,9 @@ function course(tok, cid) {
   return { ok: true, id: S(c.id), titre: c.titre, description: c.description,
     // Contenu du cours envoyé seulement une fois le pré-test passé
     blocs: g.preOk ? rows_('Blocs').filter(b => S(b.cours) === S(cid)).map(b => ({ titre: b.titre, texte: b.texte })) : [],
-    documents: g.preOk ? g.docs.map(d => { const l = g.lec[S(d.id)]; return { id: S(d.id), titre: d.titre, url: d.url, ouvert: !!(l && l.ouvert), lu: !!(l && l.lu) }; }) : [],
-    verrous: { docs: !g.preOk, post: !g.postOk, preManquant: !g.preOk, docsManquants: g.preOk ? g.docs.length - g.lus : g.docs.length },
-    lecture: { lus: g.lus, total: g.docs.length },
+    documents: g.preOk ? g.docs.map(d => { const l = g.lec[S(d.id)]; return { id: S(d.id), titre: d.titre, url: d.url, facultatif: opt_(d), ouvert: !!(l && l.ouvert), lu: !!(l && l.lu) }; }) : [],
+    verrous: { docs: !g.preOk, post: !g.postOk, preManquant: !g.preOk, docsManquants: g.preOk ? g.req.length - g.lus : g.req.length },
+    lecture: { lus: g.lus, total: g.req.length },
     nbQuestions: { 'Pré-test': qs.filter(q => q.phase === 'Pré-test').length, 'Post-test': qs.filter(q => q.phase === 'Post-test').length },
     resultats: res };
 }
@@ -173,13 +175,15 @@ function lecture_(tok, cid, did, etape) {
   const lock = LockService.getScriptLock(); lock.waitLock(10000);
   try {
     if (!gates_(u.id, cid).preOk) return { ok: false, message: 'Passez d’abord le pré-test.' };
-    if (!rows_('Documents').some(d => S(d.id) === S(did) && S(d.cours) === S(cid))) return { ok: false, message: 'Document introuvable.' };
+    const doc = rows_('Documents').filter(d => S(d.id) === S(did) && S(d.cours) === S(cid))[0];
+    if (!doc) return { ok: false, message: 'Document introuvable.' };
+    if (opt_(doc)) return { ok: true, facultatif: true }; // ressource facultative : rien à enregistrer
     let l = lectures_(u.id, cid)[S(did)];
     if (!l) { add_('Lectures', { uid: u.id, cours: S(cid), doc: S(did), ouvert: etape === 'ouvert' ? new Date() : '', lu: '' }); l = lectures_(u.id, cid)[S(did)]; if (etape === 'ouvert') return { ok: true }; }
     if (etape === 'ouvert') { if (!l.ouvert) set_('Lectures', l._r, 'ouvert', new Date()); }
     else { if (!l.ouvert) return { ok: false, message: 'Ouvrez d’abord le document pour pouvoir le marquer comme lu.' }; if (!l.lu) set_('Lectures', l._r, 'lu', new Date()); }
     const g = gates_(u.id, cid);
-    return { ok: true, lus: g.lus, total: g.docs.length, postOk: g.postOk };
+    return { ok: true, lus: g.lus, total: g.req.length, postOk: g.postOk };
   } finally { lock.releaseLock(); }
 }
 
@@ -219,7 +223,7 @@ function bonnes_(q) {
 function postBlock_(uid, cid) {
   const g = gates_(uid, cid);
   if (!g.preOk) return 'Passez d’abord le pré-test.';
-  if (!g.tous) return 'Lisez et marquez tous les documents du cours (' + g.lus + '/' + g.docs.length + ') avant le post-test.';
+  if (!g.tous) return 'Lisez et marquez tous les documents du cours (' + g.lus + '/' + g.req.length + ') avant le post-test.';
   return '';
 }
 function startTest(tok, cid, phase) {
@@ -299,7 +303,7 @@ function adminAddDoc(pw, cid, doc) {
     f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); url = f.getUrl();
   }
   if (!url) return { ok: false, message: 'Indiquez un lien ou un fichier.' };
-  add_('Documents', { id: id_('d'), cours: S(cid), titre: S(doc.titre || (doc.fichier && doc.fichier.nom) || 'Document').slice(0, 120), url });
+  add_('Documents', { id: id_('d'), cours: S(cid), titre: S(doc.titre || (doc.fichier && doc.fichier.nom) || 'Document').slice(0, 120), url, facultatif: doc.facultatif === true });
   return { ok: true };
 }
 function adminAddQuestion(pw, cid, q) {
@@ -317,7 +321,7 @@ function adminCourseDetail(pw, cid) {
   const mine = r => S(r.cours) === S(cid);
   return { ok: true,
     cours: { id: S(c.id), titre: c.titre, description: c.description, actif: !(c.actif === false || S(c.actif).toUpperCase() === 'FALSE') },
-    documents: rows_('Documents').filter(mine).map(d => ({ id: S(d.id), titre: d.titre, url: d.url })),
+    documents: rows_('Documents').filter(mine).map(d => ({ id: S(d.id), titre: d.titre, url: d.url, facultatif: opt_(d) })),
     blocs: rows_('Blocs').filter(mine).map(b => ({ id: S(b.id), titre: b.titre, texte: b.texte })),
     questions: rows_('Questions').filter(mine).map(q => ({ id: S(q.id), phase: q.phase, type: typeOf_(q), question: q.question, explication: q.explication })),
     resultats: rows_('Resultats').filter(mine).map(r => ({ pseudo: r.pseudo, phase: r.phase, score: r.score, total: r.total, date: r.date })) };
@@ -356,11 +360,12 @@ function adminDeleteCourse(pw, cid) {
 /** Modifie un élément d'un cours : document (titre, url), texte (titre, texte), question (question, explication, phase). */
 function adminUpdate(pw, table, id, champs) {
   admin_(pw);
-  const ok = { Documents: ['titre', 'url'], Blocs: ['titre', 'texte'], Questions: ['question', 'explication', 'phase'] }[table];
+  const ok = { Documents: ['titre', 'url', 'facultatif'], Blocs: ['titre', 'texte'], Questions: ['question', 'explication', 'phase'] }[table];
   if (!ok) return { ok: false, message: 'Table non autorisée.' };
   const r = rows_(table).filter(x => S(x.id) === S(id))[0]; if (!r) return { ok: false, message: 'Élément introuvable.' };
   for (const k of Object.keys(champs || {})) {
     if (ok.indexOf(k) < 0) continue;
+    if (k === 'facultatif') { set_(table, r._r, k, champs[k] === true || S(champs[k]).toLowerCase() === 'true'); continue; }
     const v = S(champs[k]).trim();
     if (k === 'phase' && PHASES.indexOf(v) < 0) return { ok: false, message: 'Phase inconnue.' };
     if ((k === 'titre' && table !== 'Blocs') || k === 'question' || k === 'url' || k === 'texte') { if (!v) return { ok: false, message: 'Champ « ' + k + ' » vide.' }; }

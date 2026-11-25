@@ -15,7 +15,9 @@ const TABS = {
   Cours: ['id', 'titre', 'description', 'actif'],
   Documents: ['id', 'cours', 'titre', 'url'],
   // options = JSON ["A","B"] ; bonnes = JSON [0] (index à partir de 0, plusieurs = choix multiple)
-  Questions: ['id', 'cours', 'phase', 'question', 'options', 'bonnes', 'explication'],
+  // type : single | multi | chart | rpt | dates | match ; donnees = JSON (contexte, tableaux, dates, appariements)
+  Questions: ['id', 'cours', 'phase', 'type', 'question', 'options', 'bonnes', 'donnees', 'explication'],
+  Blocs: ['id', 'cours', 'titre', 'texte'],
   Inscriptions: ['uid', 'pseudo', 'cours', 'date'],
   Resultats: ['date', 'uid', 'pseudo', 'cours', 'phase', 'score', 'total'],
   Messages: ['id', 'date', 'cours', 'uid', 'pseudo', 'texte']
@@ -24,7 +26,8 @@ const PHASES = ['Pré-test', 'Post-test'];
 
 const API = { login, me, profil, updateProfile, enroll, unenroll, course, startTest, submitTest,
   getMessages, postMessage, editMessage, deleteMessage,
-  adminLogin, adminOverview, adminSaveCourse, adminAddDoc, adminAddQuestion };
+  adminLogin, adminOverview, adminSaveCourse, adminAddDoc, adminAddQuestion,
+  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE };
 
 function doPost(e) {
   try {
@@ -44,14 +47,16 @@ function sh_(n) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
   let s = ss.getSheetByName(n);
   if (!s) { s = ss.insertSheet(n); s.appendRow(TABS[n]); s.setFrozenRows(1); if (n === 'Users') s.getRange('A:D').setNumberFormat('@'); }
+  else { const h = hdr_(s); TABS[n].forEach(k => { if (h.indexOf(k) < 0) { s.getRange(1, h.length + 1).setValue(k); h.push(k); } }); }
   return s;
 }
+function hdr_(s) { return s.getRange(1, 1, 1, s.getLastColumn()).getValues()[0]; }
 function rows_(n) {
   const v = sh_(n).getDataRange().getValues(), h = v.shift();
   return v.map((r, i) => { const o = { _r: i + 2 }; h.forEach((k, j) => o[k] = r[j]); return o; });
 }
-function add_(n, o) { sh_(n).appendRow(TABS[n].map(k => o[k] === undefined ? '' : o[k])); }
-function set_(n, r, k, v) { sh_(n).getRange(r, TABS[n].indexOf(k) + 1).setValue(v); }
+function add_(n, o) { const s = sh_(n); s.appendRow(hdr_(s).map(k => o[k] === undefined ? '' : o[k])); }
+function set_(n, r, k, v) { const s = sh_(n); s.getRange(r, hdr_(s).indexOf(k) + 1).setValue(v); }
 const S = v => String(v);
 const id_ = p => p + Utilities.getUuid().slice(0, 8);
 
@@ -137,6 +142,7 @@ function course(tok, cid) {
   const res = {};
   rows_('Resultats').filter(r => S(r.uid) === S(u.id) && S(r.cours) === S(cid)).forEach(r => res[r.phase] = { score: r.score, total: r.total });
   return { ok: true, id: S(c.id), titre: c.titre, description: c.description,
+    blocs: rows_('Blocs').filter(b => S(b.cours) === S(cid)).map(b => ({ titre: b.titre, texte: b.texte })),
     documents: rows_('Documents').filter(d => S(d.cours) === S(cid)).map(d => ({ titre: d.titre, url: d.url })),
     nbQuestions: { 'Pré-test': qs.filter(q => q.phase === 'Pré-test').length, 'Post-test': qs.filter(q => q.phase === 'Post-test').length },
     resultats: res };
@@ -147,6 +153,33 @@ function shuffle_(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.f
 function questions_(cid, phase) { return rows_('Questions').filter(q => S(q.cours) === S(cid) && q.phase === phase); }
 function done_(uid, cid, phase) { return rows_('Resultats').some(r => S(r.uid) === S(uid) && S(r.cours) === S(cid) && r.phase === phase); }
 
+function typeOf_(q) { return q.type || (JSON.parse(q.bonnes).length > 1 ? 'multi' : 'single'); }
+function dat_(q) { return q.donnees ? JSON.parse(q.donnees) : {}; }
+function qOut_(q) {
+  const t = typeOf_(q), d = dat_(q);
+  const o = { id: S(q.id), type: t, q: q.question, ctx: d.ctx, ctxTable: d.ctxTable, chartData: d.chartData, rptDisease: d.rptDisease };
+  if (t === 'dates') o.dates = d.dates.map(x => ({ k: x.k, label: x.label, o: x.o }));
+  else if (t === 'match') { o.pre = d.pre; o.tubes = d.tubes; o.rows = d.rows.map(r => r.label); }
+  else {
+    const opts = JSON.parse(q.options).map((x, i) => ({ i, t: typeof x === 'string' ? x : x.t, chart: x.chart, rpt: x.rpt }));
+    o.multi = t === 'multi'; o.o = d.fixe ? opts : shuffle_(opts);
+  }
+  return o;
+}
+function grade_(q, rep) {
+  const t = typeOf_(q), d = dat_(q);
+  if (t === 'dates') return !!rep && d.dates.every(x => S(rep[x.k]) === S(x.a));
+  if (t === 'match') return Array.isArray(rep) && d.rows.every((r, i) => rep[i] && S(rep[i][0]) === S(r.p) && S(rep[i][1]) === S(r.t));
+  const good = JSON.parse(q.bonnes).map(Number).sort(), got = (Array.isArray(rep) ? rep : []).map(Number).sort();
+  return good.length === got.length && good.every((v, i) => v === got[i]);
+}
+function bonnes_(q) {
+  const t = typeOf_(q), d = dat_(q);
+  if (t === 'dates') return d.dates.map(x => x.label + ' : ' + x.o[x.a]);
+  if (t === 'match') return d.rows.map(r => r.label + ' : ' + d.pre[r.p] + ' → ' + d.tubes[r.t].t);
+  if (t === 'rpt') return [];
+  return JSON.parse(q.bonnes).map(i => { const x = JSON.parse(q.options)[i]; return typeof x === 'string' ? x : x.t; });
+}
 function startTest(tok, cid, phase) {
   const u = auth_(tok); activeCourse_(cid); needEnrolled_(u, cid);
   if (PHASES.indexOf(phase) < 0) return { ok: false, message: 'Phase inconnue.' };
@@ -154,24 +187,20 @@ function startTest(tok, cid, phase) {
   if (phase === 'Post-test' && !done_(u.id, cid, 'Pré-test')) return { ok: false, message: 'Passez d’abord le pré-test.' };
   const qs = questions_(cid, phase);
   if (!qs.length) return { ok: false, message: 'Aucune question n’a encore été ajoutée.' };
-  return { ok: true, questions: shuffle_(qs.map(q => ({
-    id: S(q.id), q: q.question, multi: JSON.parse(q.bonnes).length > 1,
-    o: shuffle_(JSON.parse(q.options).map((t, i) => ({ i, t }))) }))) };
+  return { ok: true, pseudo: S(u.pseudo), limitSec: 25 * 60, questions: shuffle_(qs.map(qOut_)) };
 }
-/** reponses : { idQuestion: [index choisis] } — les non renseignées comptent comme fausses. */
+/** reponses : { idQuestion: réponse } — les questions non renseignées comptent comme fausses. */
 function submitTest(tok, cid, phase, reponses) {
   const u = auth_(tok); needEnrolled_(u, cid);
   if (done_(u.id, cid, phase)) return { ok: false, message: 'Vous avez déjà passé ce test.' };
   if (phase === 'Post-test' && !done_(u.id, cid, 'Pré-test')) return { ok: false, message: 'Passez d’abord le pré-test.' };
   const qs = questions_(cid, phase); let score = 0;
   const corr = qs.map(q => {
-    const good = JSON.parse(q.bonnes).map(Number).sort(), got = ((reponses || {})[S(q.id)] || []).map(Number).sort();
-    const ok = good.length === got.length && good.every((v, i) => v === got[i]); if (ok) score++;
-    const opts = JSON.parse(q.options);
-    return { q: q.question, ok, bonnes: good.map(i => opts[i]), explication: q.explication };
+    const ok = grade_(q, (reponses || {})[S(q.id)]); if (ok) score++;
+    return { q: q.question, ok, bonnes: bonnes_(q), explication: q.explication };
   });
   add_('Resultats', { date: new Date(), uid: u.id, pseudo: u.pseudo, cours: S(cid), phase, score, total: qs.length });
-  return { ok: true, score, total: qs.length, corrige: corr };
+  return { ok: true, pseudo: S(u.pseudo), score, total: qs.length, corrige: corr };
 }
 
 /* ---------- Discussion ---------- */
@@ -236,6 +265,31 @@ function adminAddQuestion(pw, cid, q) {
   const opts = (q.options || []).map(x => S(x).trim()).filter(Boolean);
   const bonnes = (q.bonnes || []).map(Number).filter(i => i >= 0 && i < opts.length);
   if (PHASES.indexOf(q.phase) < 0 || !S(q.question).trim() || opts.length < 2 || !bonnes.length) return { ok: false, message: 'Question, au moins 2 choix et une bonne réponse requis.' };
-  add_('Questions', { id: id_('q'), cours: S(cid), phase: q.phase, question: S(q.question).trim(), options: JSON.stringify(opts), bonnes: JSON.stringify(bonnes), explication: S(q.explication || '') });
+  add_('Questions', { id: id_('q'), cours: S(cid), phase: q.phase, type: bonnes.length > 1 ? 'multi' : 'single', question: S(q.question).trim(), options: JSON.stringify(opts), bonnes: JSON.stringify(bonnes), donnees: '{}', explication: S(q.explication || '') });
+  return { ok: true };
+}
+/** Page d'administration d'un cours : tout son contenu et les résultats (pseudonyme = code de travail). */
+function adminCourseDetail(pw, cid) {
+  admin_(pw);
+  const c = rows_('Cours').filter(x => S(x.id) === S(cid))[0]; if (!c) return { ok: false, message: 'Cours introuvable.' };
+  const mine = r => S(r.cours) === S(cid);
+  return { ok: true,
+    cours: { id: S(c.id), titre: c.titre, description: c.description, actif: !(c.actif === false || S(c.actif).toUpperCase() === 'FALSE') },
+    documents: rows_('Documents').filter(mine).map(d => ({ id: S(d.id), titre: d.titre, url: d.url })),
+    blocs: rows_('Blocs').filter(mine).map(b => ({ id: S(b.id), titre: b.titre, texte: b.texte })),
+    questions: rows_('Questions').filter(mine).map(q => ({ id: S(q.id), phase: q.phase, type: typeOf_(q), question: q.question })),
+    resultats: rows_('Resultats').filter(mine).map(r => ({ pseudo: r.pseudo, phase: r.phase, score: r.score, total: r.total, date: r.date })) };
+}
+function adminDelete(pw, table, id) {
+  admin_(pw);
+  if (['Documents', 'Questions', 'Blocs'].indexOf(table) < 0) return { ok: false, message: 'Table non autorisée.' };
+  const r = rows_(table).filter(x => S(x.id) === S(id))[0]; if (r) sh_(table).deleteRow(r._r);
+  return { ok: true };
+}
+/** Élément de texte affiché sur la page du cours (consigne, résumé, objectifs…). */
+function adminAddBloc(pw, cid, titre, texte) {
+  admin_(pw); activeCourse_(cid);
+  if (!S(texte).trim()) return { ok: false, message: 'Texte requis.' };
+  add_('Blocs', { id: id_('b'), cours: S(cid), titre: S(titre || '').slice(0, 120), texte: S(texte).slice(0, 5000) });
   return { ok: true };
 }

@@ -24,6 +24,7 @@ input,textarea,select{width:100%;padding:8px;margin:4px 0 10px;border:1px solid 
 .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.tabs button{background:none;color:var(--tx);border:1px solid var(--bd)}.tabs button.on{background:var(--pr);color:#fff}
 .mu{color:var(--mu);font-size:.9em}.er{color:var(--er)}.ok{color:var(--pr)}
 .msg{padding:6px 0;border-bottom:1px solid var(--bd)}.msg.me{background:rgba(11,110,79,.07)}
+table{border-collapse:collapse;font-size:.9em;margin:6px 0}th,td{border:1px solid var(--bd);padding:3px 7px;text-align:center}select{width:auto;max-width:100%;margin:4px 4px 4px 0}
 label.o{display:block;padding:6px 8px;border:1px solid var(--bd);border-radius:8px;margin:4px 0;cursor:pointer}label.o input{width:auto;margin:0 8px 0 0}
 </style>
 </head>
@@ -35,6 +36,7 @@ label.o{display:block;padding:6px 8px;border:1px solid var(--bd);border-radius:8
 const API_URL = 'https://script.google.com/macros/s/AKfycbzmylSAU7ocsFHMVDGNaO2jladI_obqWVw8m-4pkVr4R1gVxmZU8kRQjwqSfczdIVEE/exec';
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let tmr = null;
 let tok = localStorage.getItem('tok'), pseudo = localStorage.getItem('pseudo'), adminPw = null, timer = null, cur = null;
 
 async function api(action, ...args) {
@@ -47,7 +49,7 @@ async function api(action, ...args) {
   try { return JSON.parse(txt); }
   catch (e) { return { ok: false, message: 'Le serveur a répondu autre chose que des données (autorisation ou déploiement à refaire : exécutez setup() dans Apps Script, puis redéployez en « Nouvelle version »).' }; }
 }
-function view(html) { clearInterval(timer); $('#app').innerHTML = html; window.scrollTo(0, 0); }
+function view(html) { clearInterval(timer); clearInterval(tmr); $('#app').innerHTML = html; window.scrollTo(0, 0); }
 function nav() {
   $('#nav').innerHTML = tok ? `<button class="l" onclick="home()">Mes cours</button><button class="l" onclick="profile()">${esc(pseudo)}</button><button class="l" onclick="logout()">Quitter</button>` : `<button class="l" onclick="admin()">Admin</button>`;
 }
@@ -105,30 +107,63 @@ async function openCourse(id, tab) {
   const T = [['docs', 'Documents'], ['Pré-test', 'Pré-test'], ['Post-test', 'Post-test'], ['chat', 'Discussion']];
   view(`<h2>${esc(r.titre)}</h2><p class="mu">${esc(r.description)}</p>
   <div class="tabs">${T.map(t => `<button class="${t[0] === tab ? 'on' : ''}" onclick="openCourse('${id}','${t[0]}')">${t[1]}</button>`).join('')}</div><div id="tab"></div>`);
-  if (tab === 'docs') $('#tab').innerHTML = r.documents.map(d => `<div class="card">📄 <a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.titre)}</a></div>`).join('') || '<p class="mu">Aucun document pour le moment.</p>';
+  if (tab === 'docs') $('#tab').innerHTML = r.blocs.map(b => `<div class="card">${b.titre ? '<b>' + esc(b.titre) + '</b><br>' : ''}${esc(b.texte).replace(/\n/g, '<br>')}</div>`).join('')
+    + r.documents.map(d => `<div class="card">📄 <a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.titre)}</a></div>`).join('')
+    || '<p class="mu">Aucun contenu pour le moment.</p>';
   else if (tab === 'chat') chat(id);
   else testHome(id, tab);
 }
 
 /* ---------- Tests ---------- */
+let curTest = null, sending = false;
 function testHome(id, ph) {
   const res = cur.resultats[ph], n = cur.nbQuestions[ph];
   $('#tab').innerHTML = res ? `<div class="card"><b>${ph} terminé</b><p class="ok">Score : ${res.score} / ${res.total}</p></div>`
-    : n ? `<div class="card"><p>${n} question(s). Vous ne pouvez passer ce test qu’une fois.</p><button onclick="startTest('${id}','${ph}')">Commencer le ${ph.toLowerCase()}</button></div>`
+    : n ? `<div class="card"><p>${n} question(s), 25 minutes. Vous ne pouvez passer ce test qu’une fois ; votre pseudonyme (<b>${esc(pseudo)}</b>) est votre code de travail.</p><button onclick="startTest('${id}','${ph}')">Commencer le ${ph.toLowerCase()}</button></div>`
     : '<p class="mu">Ce test n’est pas encore prêt.</p>';
+}
+const tbl = (head, rows) => `<div style="overflow-x:auto"><table><tr>${head.map(x => `<th>${esc(x)}</th>`).join('')}</tr>${rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table></div>`;
+const rptTable = r => tbl(['', '< 5 ans M', '< 5 ans F', '≥ 5 ans M', '≥ 5 ans F', 'Total'], r.map((l, i) => [['Suspects', 'Décès', 'Confirmés'][i]].concat(l)));
+function chartSvg(t, d) {
+  const W = 240, H = 120, m = 10, mx = Math.max(...d), n = d.length, bw = (W - 2 * m) / n, y = v => H - m - v / mx * (H - 2 * m), x = i => m + bw * (i + .5), C = '#0b6e4f'; let g = '';
+  if (t === 'pie') { const tot = d.reduce((a, b) => a + b, 0), cx = W / 2, cy = H / 2, r = H / 2 - 6; let a0 = -Math.PI / 2;
+    d.forEach((v, i) => { if (!v) return; const a1 = a0 + 2 * Math.PI * v / tot; g += `<path d="M${cx},${cy}L${cx + r * Math.cos(a0)},${cy + r * Math.sin(a0)}A${r},${r} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${cx + r * Math.cos(a1)},${cy + r * Math.sin(a1)}Z" fill="hsl(${i * 30},55%,55%)" stroke="#fff"/>`; a0 = a1; }); }
+  else if (t === 'histo') d.forEach((v, i) => g += `<rect x="${m + bw * i}" y="${y(v)}" width="${bw}" height="${H - m - y(v)}" fill="${C}" stroke="#fff" stroke-width=".5"/>`);
+  else if (t === 'bars') d.forEach((v, i) => g += `<rect x="${m + bw * i + bw * .2}" y="${y(v)}" width="${bw * .6}" height="${H - m - y(v)}" fill="${C}"/>`);
+  else if (t === 'line') g = `<polyline fill="none" stroke="${C}" stroke-width="2" points="${d.map((v, i) => x(i) + ',' + y(v)).join(' ')}"/>` + d.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="2.5" fill="${C}"/>`).join('');
+  else { let p = `M${x(0)},${y(d[0])}`; for (let i = 1; i < n; i++) { const c = (x(i - 1) + x(i)) / 2; p += `C${c},${y(d[i - 1])} ${c},${y(d[i])} ${x(i)},${y(d[i])}`; } g = `<path d="${p}" fill="none" stroke="${C}" stroke-width="2"/>`; }
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:240px;background:#fff;border:1px solid #ccc;border-radius:6px">${t === 'pie' ? '' : `<line x1="${m}" y1="${H - m}" x2="${W - m}" y2="${H - m}" stroke="#888"/>`}${g}</svg>`;
+}
+function renderQ(q, n) {
+  let s = `<div class="card" data-q="${q.id}" data-t="${q.type}"><b>${n + 1}. ${esc(q.q)}</b>`;
+  if (q.ctx) s += `<p class="mu">${esc(q.ctx)}</p>`;
+  if (q.ctxTable) s += tbl(q.ctxTable.head, q.ctxTable.rows);
+  if (q.rptDisease) s += `<p class="mu">Ligne du rapport : ${esc(q.rptDisease)}</p>`;
+  if (q.type === 'dates') s += q.dates.map(d => `<div><label>${esc(d.label)}</label><select data-k="${d.k}"><option value="">—</option>${d.o.map((t, i) => `<option value="${i}">${esc(t)}</option>`).join('')}</select></div>`).join('');
+  else if (q.type === 'match') s += q.rows.map((l, i) => `<div style="margin:6px 0"><b>${esc(l)}</b><br><select data-r="${i}" data-c="0"><option value="">Prélèvement…</option>${q.pre.map((t, j) => `<option value="${j}">${esc(t)}</option>`).join('')}</select>
+    <select data-r="${i}" data-c="1"><option value="">Contenant…</option>${q.tubes.map((t, j) => `<option value="${j}">${esc(t.t)}</option>`).join('')}</select></div>`).join('');
+  else s += (q.multi ? '<div class="mu">Plusieurs réponses possibles</div>' : '') + q.o.map(o => `<label class="o"><input type="${q.multi ? 'checkbox' : 'radio'}" name="q${q.id}" value="${o.i}">${o.chart ? chartSvg(o.chart, q.chartData) : o.rpt ? rptTable(o.rpt) : esc(o.t)}</label>`).join('');
+  return s + '</div>';
 }
 async function startTest(id, ph) {
   const r = await api('startTest', tok, id, ph); if (!r.ok) return alert(r.message);
-  $('#tab').innerHTML = r.questions.map((q, n) => `<div class="card" data-q="${q.id}"><b>${n + 1}. ${esc(q.q)}</b>${q.multi ? '<div class="mu">Plusieurs réponses possibles</div>' : ''}
-    ${q.o.map(o => `<label class="o"><input type="${q.multi ? 'checkbox' : 'radio'}" name="q${q.id}" value="${o.i}">${esc(o.t)}</label>`).join('')}</div>`).join('')
-    + `<button onclick="sendTest('${id}','${ph}')">Envoyer mes réponses</button>`;
+  curTest = { id, ph }; sending = false; let left = r.limitSec;
+  $('#tab').innerHTML = `<div class="card"><b>Code de travail (pseudonyme) : ${esc(r.pseudo)}</b><div class="mu">Temps restant : <span id="cd"></span>. À la fin du temps, vos réponses partent automatiquement ; une question sans réponse compte comme fausse.</div></div>`
+    + r.questions.map(renderQ).join('') + `<button onclick="sendTest()">Envoyer mes réponses</button>`;
+  const tick = () => { if ($('#cd')) $('#cd').textContent = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0'); if (left-- <= 0) { clearInterval(tmr); sendTest(); } };
+  tick(); tmr = setInterval(tick, 1000);
 }
-async function sendTest(id, ph) {
-  const rep = {}; document.querySelectorAll('[data-q]').forEach(c => rep[c.dataset.q] = [...c.querySelectorAll('input:checked')].map(i => +i.value));
-  const r = await api('submitTest', tok, id, ph, rep); if (!r.ok) return alert(r.message);
-  cur.resultats[ph] = { score: r.score, total: r.total };
-  $('#tab').innerHTML = `<div class="card"><h3 class="ok">Score : ${r.score} / ${r.total}</h3></div>` + r.corrige.map(c => `<div class="card"><b>${esc(c.q)}</b>
-    <div class="${c.ok ? 'ok' : 'er'}">${c.ok ? '✔ Correct' : '✘ Incorrect'}</div><div class="mu">Bonne réponse : ${c.bonnes.map(esc).join(' ; ')}</div><div>${esc(c.explication)}</div></div>`).join('');
+async function sendTest() {
+  if (sending || !curTest) return; sending = true; clearInterval(tmr);
+  const rep = {};
+  document.querySelectorAll('[data-q]').forEach(c => { const t = c.dataset.t, id = c.dataset.q;
+    if (t === 'dates') { const o = {}; c.querySelectorAll('select[data-k]').forEach(s => o[s.dataset.k] = s.value); rep[id] = o; }
+    else if (t === 'match') { const a = []; c.querySelectorAll('select[data-r]').forEach(s => { (a[+s.dataset.r] = a[+s.dataset.r] || ['', ''])[+s.dataset.c] = s.value; }); rep[id] = a; }
+    else rep[id] = [...c.querySelectorAll('input:checked')].map(i => +i.value); });
+  const r = await api('submitTest', tok, curTest.id, curTest.ph, rep); if (!r.ok) { sending = false; return alert(r.message); }
+  cur.resultats[curTest.ph] = { score: r.score, total: r.total };
+  $('#tab').innerHTML = `<div class="card"><h3 class="ok">Score : ${r.score} / ${r.total}</h3><div class="mu">Code de travail : ${esc(r.pseudo)}</div></div>` + r.corrige.map(c => `<div class="card"><b>${esc(c.q)}</b>
+    <div class="${c.ok ? 'ok' : 'er'}">${c.ok ? '✔ Correct' : '✘ Incorrect'}</div>${c.bonnes.length ? `<div class="mu">Bonne réponse : ${c.bonnes.map(esc).join(' ; ')}</div>` : ''}<div>${esc(c.explication)}</div></div>`).join('');
 }
 
 /* ---------- Discussion ---------- */
@@ -153,31 +188,44 @@ function admin() {
 async function adminIn() { adminPw = $('#aw').value; const r = await api('adminLogin', adminPw); r.ok ? adminHome() : ($('#m').textContent = r.message); }
 async function adminHome() {
   const r = await api('adminOverview', adminPw); if (!r.ok) return alert(r.message);
-  view(`<h2>Administration</h2><div class="card"><h3>Nouveau cours</h3><input id="ct" placeholder="Titre"><textarea id="cd" rows="2" placeholder="Description"></textarea><button onclick="saveCourse()">Créer le cours</button></div>
+  view(`<h2>Administration</h2><div class="card"><h3>Nouveau cours</h3><input id="ct" placeholder="Titre"><textarea id="cd" rows="2" placeholder="Description"></textarea><button onclick="newCourse()">Créer le cours</button>
+  <button class="s" onclick="importMPE()">Importer le cours MPE (20 questions)</button></div>
   ${r.cours.map(c => `<div class="card"><b>${esc(c.titre)}</b> ${c.actif ? '' : '<span class="er">(masqué)</span>'}<p class="mu">${c.inscrits} inscrit(s) · ${c.documents} document(s) · ${c.pre} Q pré-test · ${c.post} Q post-test · moyenne pré ${c.moyPre ?? '–'} % / post ${c.moyPost ?? '–'} %</p>
-  <button class="s" onclick="adminCourse('${c.id}','${esc(c.titre).replace(/'/g, '’')}')">Ajouter documents / questions</button></div>`).join('')}
-  <p class="mu">Pour masquer un cours ou corriger une donnée, modifiez directement le Google Sheet (colonne « actif » = FALSE).</p>`);
+  <button class="s" onclick="adminCourse('${c.id}')">Gérer ce cours</button></div>`).join('')}
+  <p class="mu">Les utilisateurs et leurs mots de passe sont dans l’onglet « Users » du Google Sheet, modifiables à la main.</p>`);
 }
-async function saveCourse() { const r = await api('adminSaveCourse', adminPw, { titre: $('#ct').value, description: $('#cd').value }); r.ok ? adminHome() : alert(r.message); }
-function adminCourse(id, titre) {
-  view(`<h2>${titre}</h2><button class="s" onclick="adminHome()">← Retour</button>
-  <div class="card"><h3>Ajouter un document</h3><input id="dt" placeholder="Titre du document"><input id="du" placeholder="Lien (Drive, YouTube, site…)"><input id="df" type="file">
-  <button onclick="addDoc('${id}')">Ajouter</button></div>
-  <div class="card"><h3>Ajouter une question</h3><select id="qp"><option>Pré-test</option><option>Post-test</option></select>
-  <textarea id="qq" rows="2" placeholder="Question"></textarea><textarea id="qo" rows="4" placeholder="Un choix par ligne"></textarea>
-  <input id="qb" placeholder="Numéros des bonnes réponses, ex. 2 ou 1,3"><textarea id="qe" rows="2" placeholder="Explication (affichée après le test)"></textarea>
-  <button onclick="addQ('${id}')">Ajouter</button></div>`);
+async function newCourse() { const r = await api('adminSaveCourse', adminPw, { titre: $('#ct').value, description: $('#cd').value }); r.ok ? adminCourse(r.id) : alert(r.message); }
+async function importMPE() { if (!confirm('Importer le cours MPE avec ses 20 questions en pré-test et en post-test ?')) return; const r = await api('adminImporterMPE', adminPw); alert(r.message || 'Fait.'); adminHome(); }
+async function saveCourse(id) {
+  const r = await api('adminSaveCourse', adminPw, { id, titre: $('#ct').value, description: $('#cd').value, actif: $('#ca').checked });
+  r.ok ? (alert('Enregistré.'), adminCourse(id)) : alert(r.message);
 }
+async function del(table, rid, cid) { if (confirm('Supprimer cet élément ?')) { await api('adminDelete', adminPw, table, rid); adminCourse(cid); } }
+async function adminCourse(id) {
+  const r = await api('adminCourseDetail', adminPw, id); if (!r.ok) return alert(r.message);
+  const c = r.cours, row = (t, rid, label) => `<div class="msg">${label} <button class="l" onclick="del('${t}','${rid}','${id}')">Supprimer</button></div>`;
+  view(`<button class="s" onclick="adminHome()">← Retour</button><h2>${esc(c.titre)}</h2>
+  <div class="card"><h3>Informations du cours</h3><input id="ct" value="${esc(c.titre)}"><textarea id="cd" rows="3" placeholder="Description">${esc(c.description)}</textarea>
+  <label class="o"><input type="checkbox" id="ca" ${c.actif ? 'checked' : ''}> Cours visible par les utilisateurs</label><button onclick="saveCourse('${id}')">Enregistrer</button></div>
+  <div class="card"><h3>Texte sur la page du cours</h3>${r.blocs.map(b => row('Blocs', b.id, '<b>' + esc(b.titre) + '</b> ' + esc(b.texte).slice(0, 80))).join('')}
+  <input id="bt" placeholder="Titre (facultatif)"><textarea id="bx" rows="3" placeholder="Texte : objectifs, consignes, résumé…"></textarea><button onclick="addBloc('${id}')">Ajouter</button></div>
+  <div class="card"><h3>Documents</h3>${r.documents.map(d => row('Documents', d.id, '📄 ' + esc(d.titre))).join('')}
+  <input id="dt" placeholder="Titre du document"><input id="du" placeholder="Lien (Drive, YouTube, site…)"><input id="df" type="file"><button onclick="addDoc('${id}')">Ajouter</button></div>
+  <div class="card"><h3>Questions (${r.questions.length})</h3><div style="max-height:220px;overflow:auto">${r.questions.map(q => row('Questions', q.id, `<span class="mu">${q.phase} · ${q.type}</span> ${esc(q.question).slice(0, 70)}`)).join('')}</div>
+  <select id="qp"><option>Pré-test</option><option>Post-test</option></select><textarea id="qq" rows="2" placeholder="Question"></textarea><textarea id="qo" rows="4" placeholder="Un choix par ligne"></textarea>
+  <input id="qb" placeholder="Numéros des bonnes réponses, ex. 2 ou 1,3"><textarea id="qe" rows="2" placeholder="Explication (affichée après le test)"></textarea><button onclick="addQ('${id}')">Ajouter la question</button></div>
+  <div class="card"><h3>Résultats (code de travail = pseudonyme)</h3>${r.resultats.length ? tbl(['Pseudonyme', 'Test', 'Score', 'Date'], r.resultats.map(x => [x.pseudo, x.phase, x.score + '/' + x.total, new Date(x.date).toLocaleDateString('fr-FR')])) : '<p class="mu">Aucun résultat.</p>'}</div>`);
+}
+async function addBloc(id) { const r = await api('adminAddBloc', adminPw, id, $('#bt').value, $('#bx').value); r.ok ? adminCourse(id) : alert(r.message); }
 async function addDoc(id) {
   const doc = { titre: $('#dt').value, url: $('#du').value }, f = $('#df').files[0];
   if (f) doc.fichier = { nom: f.name, mime: f.type || 'application/octet-stream', b64: await new Promise(ok => { const x = new FileReader(); x.onload = () => ok(x.result.split(',')[1]); x.readAsDataURL(f); }) };
-  const r = await api('adminAddDoc', adminPw, id, doc); alert(r.ok ? 'Document ajouté.' : r.message);
+  const r = await api('adminAddDoc', adminPw, id, doc); r.ok ? adminCourse(id) : alert(r.message);
 }
 async function addQ(id) {
   const q = { phase: $('#qp').value, question: $('#qq').value, options: $('#qo').value.split('\n'), explication: $('#qe').value,
     bonnes: $('#qb').value.split(/[,;\s]+/).filter(Boolean).map(n => n - 1) };
-  const r = await api('adminAddQuestion', adminPw, id, q);
-  if (r.ok) { alert('Question ajoutée.'); ['qq', 'qo', 'qb', 'qe'].forEach(k => $('#' + k).value = ''); } else alert(r.message);
+  const r = await api('adminAddQuestion', adminPw, id, q); r.ok ? adminCourse(id) : alert(r.message);
 }
 
 /* ---------- Application installable (PWA) ---------- */

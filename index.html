@@ -191,7 +191,7 @@ async function adminHome() {
   view(`<h2>Administration</h2><div class="card"><h3>Nouveau cours</h3><input id="ct" placeholder="Titre"><textarea id="cd" rows="2" placeholder="Description"></textarea><button onclick="newCourse()">Créer le cours</button>
   <button class="s" onclick="importMPE()">Importer le cours MPE (20 questions)</button></div>
   ${r.cours.map(c => `<div class="card"><b>${esc(c.titre)}</b> ${c.actif ? '' : '<span class="er">(masqué)</span>'}<p class="mu">${c.inscrits} inscrit(s) · ${c.documents} document(s) · ${c.pre} Q pré-test · ${c.post} Q post-test · moyenne pré ${c.moyPre ?? '–'} % / post ${c.moyPost ?? '–'} %</p>
-  <button class="s" onclick="adminCourse('${c.id}')">Gérer ce cours</button></div>`).join('')}
+  <button class="s" onclick="adminCourse('${c.id}')">Gérer / modifier</button> <button class="l" onclick="delCourse('${c.id}')">Supprimer</button></div>`).join('')}
   <p class="mu">Les utilisateurs et leurs mots de passe sont dans l’onglet « Users » du Google Sheet, modifiables à la main.</p>`);
 }
 async function newCourse() { const r = await api('adminSaveCourse', adminPw, { titre: $('#ct').value, description: $('#cd').value }); r.ok ? adminCourse(r.id) : alert(r.message); }
@@ -200,10 +200,23 @@ async function saveCourse(id) {
   const r = await api('adminSaveCourse', adminPw, { id, titre: $('#ct').value, description: $('#cd').value, actif: $('#ca').checked });
   r.ok ? (alert('Enregistré.'), adminCourse(id)) : alert(r.message);
 }
+async function delCourse(id) {
+  if (!confirm('Supprimer ce cours DÉFINITIVEMENT ? Ses documents, questions, inscriptions, résultats et messages seront aussi supprimés. (Pour seulement le cacher, décochez « visible » dans « Gérer / modifier ».)')) return;
+  const r = await api('adminDeleteCourse', adminPw, id); r.ok ? adminHome() : alert(r.message);
+}
+let admDet = null;
+async function edit(t, rid, cid) {
+  const g = (admDet[{ Documents: 'documents', Blocs: 'blocs', Questions: 'questions' }[t]] || []).filter(x => x.id === rid)[0]; if (!g) return;
+  const ch = {};
+  if (t === 'Documents') { const a = prompt('Titre du document :', g.titre); if (a === null) return; const b = prompt('Lien :', g.url); if (b === null) return; ch.titre = a; ch.url = b; }
+  else if (t === 'Blocs') { const a = prompt('Titre (facultatif) :', g.titre); if (a === null) return; const b = prompt('Texte :', g.texte); if (b === null) return; ch.titre = a; ch.texte = b; }
+  else { const a = prompt('Question :', g.question); if (a === null) return; const b = prompt('Explication :', g.explication || ''); if (b === null) return; ch.question = a; ch.explication = b; }
+  const r = await api('adminUpdate', adminPw, t, rid, ch); r.ok ? adminCourse(cid) : alert(r.message);
+}
 async function del(table, rid, cid) { if (confirm('Supprimer cet élément ?')) { await api('adminDelete', adminPw, table, rid); adminCourse(cid); } }
 async function adminCourse(id) {
   const r = await api('adminCourseDetail', adminPw, id); if (!r.ok) return alert(r.message);
-  const c = r.cours, row = (t, rid, label) => `<div class="msg">${label} <button class="l" onclick="del('${t}','${rid}','${id}')">Supprimer</button></div>`;
+  admDet = r; const c = r.cours, row = (t, rid, label) => `<div class="msg">${label} <button class="l" onclick="edit('${t}','${rid}','${id}')">Modifier</button><button class="l" onclick="del('${t}','${rid}','${id}')">Supprimer</button></div>`;
   view(`<button class="s" onclick="adminHome()">← Retour</button><h2>${esc(c.titre)}</h2>
   <div class="card"><h3>Informations du cours</h3><input id="ct" value="${esc(c.titre)}"><textarea id="cd" rows="3" placeholder="Description">${esc(c.description)}</textarea>
   <label class="o"><input type="checkbox" id="ca" ${c.actif ? 'checked' : ''}> Cours visible par les utilisateurs</label><button onclick="saveCourse('${id}')">Enregistrer</button></div>
@@ -214,6 +227,7 @@ async function adminCourse(id) {
   <div class="card"><h3>Questions (${r.questions.length})</h3><div style="max-height:220px;overflow:auto">${r.questions.map(q => row('Questions', q.id, `<span class="mu">${q.phase} · ${q.type}</span> ${esc(q.question).slice(0, 70)}`)).join('')}</div>
   <select id="qp"><option>Pré-test</option><option>Post-test</option></select><textarea id="qq" rows="2" placeholder="Question"></textarea><textarea id="qo" rows="4" placeholder="Un choix par ligne"></textarea>
   <input id="qb" placeholder="Numéros des bonnes réponses, ex. 2 ou 1,3"><textarea id="qe" rows="2" placeholder="Explication (affichée après le test)"></textarea><button onclick="addQ('${id}')">Ajouter la question</button></div>
+  <div class="card"><button class="l" onclick="delCourse('${id}')">Supprimer tout ce cours</button></div>
   <div class="card"><h3>Résultats (code de travail = pseudonyme)</h3>${r.resultats.length ? tbl(['Pseudonyme', 'Test', 'Score', 'Date'], r.resultats.map(x => [x.pseudo, x.phase, x.score + '/' + x.total, new Date(x.date).toLocaleDateString('fr-FR')])) : '<p class="mu">Aucun résultat.</p>'}</div>`);
 }
 async function addBloc(id) { const r = await api('adminAddBloc', adminPw, id, $('#bt').value, $('#bx').value); r.ok ? adminCourse(id) : alert(r.message); }

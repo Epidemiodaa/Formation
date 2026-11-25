@@ -27,7 +27,7 @@ const PHASES = ['Pré-test', 'Post-test'];
 const API = { login, me, profil, updateProfile, enroll, unenroll, course, startTest, submitTest,
   getMessages, postMessage, editMessage, deleteMessage,
   adminLogin, adminOverview, adminSaveCourse, adminAddDoc, adminAddQuestion,
-  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE: adminImporterMPE_ };
+  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE: adminImporterMPE_, adminDeleteCourse, adminUpdate };
 
 function doPost(e) {
   try {
@@ -277,7 +277,7 @@ function adminCourseDetail(pw, cid) {
     cours: { id: S(c.id), titre: c.titre, description: c.description, actif: !(c.actif === false || S(c.actif).toUpperCase() === 'FALSE') },
     documents: rows_('Documents').filter(mine).map(d => ({ id: S(d.id), titre: d.titre, url: d.url })),
     blocs: rows_('Blocs').filter(mine).map(b => ({ id: S(b.id), titre: b.titre, texte: b.texte })),
-    questions: rows_('Questions').filter(mine).map(q => ({ id: S(q.id), phase: q.phase, type: typeOf_(q), question: q.question })),
+    questions: rows_('Questions').filter(mine).map(q => ({ id: S(q.id), phase: q.phase, type: typeOf_(q), question: q.question, explication: q.explication })),
     resultats: rows_('Resultats').filter(mine).map(r => ({ pseudo: r.pseudo, phase: r.phase, score: r.score, total: r.total, date: r.date })) };
 }
 function adminDelete(pw, table, id) {
@@ -298,4 +298,31 @@ function adminImporterMPE_(pw) {
   admin_(pw);
   if (typeof importerCoursMPE !== 'function') return { ok: false, message: 'Ajoutez le fichier Seed.gs au projet Apps Script, puis redéployez.' };
   return importerCoursMPE();
+}
+/** Supprime un cours et tout ce qui s'y rattache (documents, textes, questions, inscriptions, résultats, messages). */
+function adminDeleteCourse(pw, cid) {
+  admin_(pw);
+  const n = {};
+  ['Documents', 'Blocs', 'Questions', 'Inscriptions', 'Resultats', 'Messages'].forEach(t => {
+    const r = rows_(t).filter(x => S(x.cours) === S(cid)).reverse(); r.forEach(x => sh_(t).deleteRow(x._r)); n[t] = r.length;
+  });
+  const c = rows_('Cours').filter(x => S(x.id) === S(cid))[0];
+  if (!c) return { ok: false, message: 'Cours introuvable.' };
+  sh_('Cours').deleteRow(c._r);
+  return { ok: true, supprime: n };
+}
+/** Modifie un élément d'un cours : document (titre, url), texte (titre, texte), question (question, explication, phase). */
+function adminUpdate(pw, table, id, champs) {
+  admin_(pw);
+  const ok = { Documents: ['titre', 'url'], Blocs: ['titre', 'texte'], Questions: ['question', 'explication', 'phase'] }[table];
+  if (!ok) return { ok: false, message: 'Table non autorisée.' };
+  const r = rows_(table).filter(x => S(x.id) === S(id))[0]; if (!r) return { ok: false, message: 'Élément introuvable.' };
+  for (const k of Object.keys(champs || {})) {
+    if (ok.indexOf(k) < 0) continue;
+    const v = S(champs[k]).trim();
+    if (k === 'phase' && PHASES.indexOf(v) < 0) return { ok: false, message: 'Phase inconnue.' };
+    if ((k === 'titre' && table !== 'Blocs') || k === 'question' || k === 'url' || k === 'texte') { if (!v) return { ok: false, message: 'Champ « ' + k + ' » vide.' }; }
+    set_(table, r._r, k, v);
+  }
+  return { ok: true };
 }

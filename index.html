@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Plateforme de formation</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b6e4f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Formation">
+<link rel="apple-touch-icon" href="icon-192.png">
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--tx:#1d2733;--mu:#64707d;--pr:#0b6e4f;--bd:#dde2e8;--er:#b3261e}
 @media(prefers-color-scheme:dark){:root{--bg:#14181d;--card:#1d242c;--tx:#e8ecf0;--mu:#9aa6b2;--pr:#3cc28f;--bd:#2f3943;--er:#f2827b}}
@@ -22,7 +28,7 @@ label.o{display:block;padding:6px 8px;border:1px solid var(--bd);border-radius:8
 </style>
 </head>
 <body>
-<header><b>Plateforme de formation</b><span id="nav"></span></header>
+<header><b>Plateforme de formation</b><span><button id="inst" class="s" style="display:none" onclick="installApp()">📲 Installer</button><span id="nav"></span></span></header>
 <main id="app"></main>
 <script>
 // >>> Coller ici l'URL /exec du déploiement Apps Script <<<
@@ -163,6 +169,21 @@ async function addQ(id) {
   const r = await api('adminAddQuestion', adminPw, id, q);
   if (r.ok) { alert('Question ajoutée.'); ['qq', 'qo', 'qb', 'qe'].forEach(k => $('#' + k).value = ''); } else alert(r.message);
 }
+
+/* ---------- Application installable (PWA) ---------- */
+let evInstall = null;
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+if (!standalone) {
+  if (ios) $('#inst').style.display = '';
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); evInstall = e; $('#inst').style.display = ''; });
+}
+async function installApp() {
+  if (evInstall) { evInstall.prompt(); await evInstall.userChoice; evInstall = null; $('#inst').style.display = 'none'; }
+  else alert('Sur iPhone : touchez le bouton Partager de Safari, puis « Sur l’écran d’accueil ».');
+}
+window.addEventListener('appinstalled', () => { $('#inst').style.display = 'none'; });
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
 tok ? home() : auth();
 </script>

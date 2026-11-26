@@ -40,6 +40,13 @@ table{border-collapse:collapse;font-size:.9em;margin:6px 0}th,td{border:1px soli
 .bdg{display:inline-block;background:var(--er);color:#fff;border-radius:999px;font-size:.75em;padding:0 7px;margin-left:4px}
 #toast{position:fixed;left:50%;transform:translateX(-50%);top:max(10px,env(safe-area-inset-top));z-index:30;width:min(92vw,420px);display:flex;flex-direction:column;gap:8px}
 #toast div{background:var(--card);border:1px solid var(--pr);border-left-width:5px;border-radius:10px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.25);cursor:pointer}
+/* Parcours du cours : cartes de modules avec photo */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin:10px 0}.grid .card{margin:0}
+.mcard{cursor:pointer;transition:transform .15s}.mcard:hover{transform:translateY(-2px)}.mcard.mlk{cursor:not-allowed}.mcard.mlk:hover{transform:none}.mcard.mlk .cov img{filter:grayscale(1)}
+.cov.ph{background:linear-gradient(135deg,#0b6e4f,#2a9d78);display:flex;align-items:center;justify-content:center}.cov.ph>span{font-size:2.6em;color:#fff;font-weight:700}
+.lkm{position:absolute;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;font-size:2em}
+/* Lecteur intégré : vidéos, documents Word/PDF/PowerPoint, leçons HTML */
+.vw{margin:8px 0}.vw iframe,.vw video{width:100%;border:0;border-radius:8px;background:#000}.vw iframe.vid,.vw video{aspect-ratio:16/9}.vw iframe.tall{height:70vh;background:#fff}.vw iframe.page{height:75vh;background:#fff}.vw img{border-radius:8px}
 /* Personnages animés (introduction des modules) */
 .stage{background:linear-gradient(#e6f5ee,var(--card));border:1px solid var(--bd);border-radius:12px;padding:12px;margin:10px 0}
 .chars{display:flex;justify-content:space-around;align-items:flex-end}
@@ -136,10 +143,11 @@ async function saveProfile() {
 async function openCourse(id, tab) {
   view('<p class="mu">Chargement…</p>');
   const r = await api('course', tok, id); if (!r.ok) { fail(r); return home(); }
+  if (!tab) modIdx = null;
   cur = r; tab = tab || (r.verrous.docs ? 'Pré-test' : 'docs');
   const T = [['docs', 'Cours'], ['Pré-test', 'Pré-test'], ['Post-test', 'Post-test'], ['chat', 'Discussion']], base = tab.indexOf('quiz:') === 0 ? 'docs' : tab;
   view(`${r.image ? `<div class="cov big"><img src="${esc(r.image)}" alt=""><div class="cap"><h2>${esc(r.titre)}</h2></div></div>` : `<h2>${esc(r.titre)}</h2>`}<p class="mu">${esc(r.description)}</p>
-  <div class="tabs">${T.map(t => `<button class="${t[0] === base ? 'on' : ''}" onclick="openCourse('${id}','${t[0]}')">${lockOf(t[0]) ? '🔒 ' : ''}${t[1]}${t[0] === 'chat' && unread[id] ? `<span class="bdg" id="chatbdg">${unread[id]}</span>` : ''}</button>`).join('')}</div><div id="tab"></div>`);
+  <div class="tabs">${T.map(t => `<button class="${t[0] === base ? 'on' : ''}" onclick="${t[0] === 'docs' ? 'modIdx = null;' : ''}openCourse('${id}','${t[0]}')">${lockOf(t[0]) ? '🔒 ' : ''}${t[1]}${t[0] === 'chat' && unread[id] ? `<span class="bdg" id="chatbdg">${unread[id]}</span>` : ''}</button>`).join('')}</div><div id="tab"></div>`);
   if (tab === 'docs') docsTab(id);
   else if (base !== tab) quizHome(id, tab.slice(5));
   else if (tab === 'chat') chat(id);
@@ -150,9 +158,44 @@ async function openCourse(id, tab) {
 // Ordre : pré-test (sauf s'il est facultatif) → modules dans l'ordre (documents lus et marqués, puis quiz réussi) → post-test. Le serveur applique les mêmes règles.
 const lockOf = t => t === 'docs' ? cur.verrous.docs : t === 'Post-test' ? cur.verrous.post && !cur.resultats['Post-test'] : false;
 let modIdx = null;
+const KIND = { video: '🎬', word: '📝', pdf: '📕', ppt: '📊', excel: '📈', image: '🖼️', page: '🎭', lien: '🔗' };
+/** Lecteur intégré possible ? (YouTube, Vimeo, fichiers Drive, Google Docs, vidéo directe, image, leçon HTML) */
+function embedOf(d) {
+  if (d.type === 'page') return { page: true };
+  const u = d.url || ''; let m;
+  if ((m = /(?:youtube\.com\/watch\?(?:[^#]*&)?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([\w-]{11})/.exec(u))) return { src: 'https://www.youtube.com/embed/' + m[1] };
+  if ((m = /vimeo\.com\/(?:video\/)?(\d+)/.exec(u))) return { src: 'https://player.vimeo.com/video/' + m[1] };
+  if ((m = /drive\.google\.com\/file\/d\/([\w-]+)/.exec(u))) return { src: 'https://drive.google.com/file/d/' + m[1] + '/preview' };
+  if ((m = /docs\.google\.com\/(document|presentation|spreadsheets)\/d\/([\w-]+)/.exec(u))) return { src: 'https://docs.google.com/' + m[1] + '/d/' + m[2] + '/preview' };
+  if (/^https:\/\/.+\.(mp4|webm|ogg|m4v)(\?|$)/i.test(u)) return { video: u };
+  if (/^https:\/\/.+\.(png|jpe?g|gif|webp)(\?|$)/i.test(u)) return { img: u };
+  return null;
+}
 function docCard(id, d) {
-  return `<div class="card">📄 <a href="${esc(d.url)}" target="_blank" rel="noopener" ${d.facultatif ? '' : `onclick="docOpened('${id}','${d.id}')"`}>${esc(d.titre)}</a>${d.facultatif ? '' : `
+  const e = embedOf(d), ic = KIND[d.type] || '🔗';
+  const title = d.type === 'page' ? `<b>${esc(d.titre)}</b>` : `<a href="${esc(d.url)}" target="_blank" rel="noopener" ${d.facultatif ? '' : `onclick="docOpened('${id}','${d.id}')"`}>${esc(d.titre)}</a>`;
+  const lab = d.type === 'page' ? '▶ Ouvrir la leçon' : d.type === 'video' ? '▶ Voir la vidéo' : '👁 Lire ici';
+  return `<div class="card">${ic} ${title} ${e ? `<button class="s" onclick="viewDoc('${id}','${d.id}')">${lab}</button>` : ''}<div id="vw_${d.id}"></div>${d.facultatif ? '' : `
       <div id="dz_${d.id}">${docState(id, d)}</div>`}</div>`;
+}
+/** Affiche / masque le document dans la page : le lire ici compte comme « ouvert ». Les leçons HTML tournent dans un cadre isolé (aucun accès à la session). */
+async function viewDoc(cid, did) {
+  const d = findDoc(did), box = $('#vw_' + did); if (!d || !box) return;
+  if (box.firstChild) { box.innerHTML = ''; box.className = ''; return; }
+  docOpened(cid, did);
+  const e = embedOf(d); let el;
+  if (d.type === 'page') {
+    box.innerHTML = '<p class="mu">Chargement…</p>';
+    const r = await api('getPage', tok, cid, did); box.innerHTML = ''; if (!r.ok) return alert(r.message);
+    el = document.createElement('iframe'); el.setAttribute('sandbox', 'allow-scripts allow-popups'); el.className = 'page'; el.srcdoc = r.html;
+  } else if (e && e.src) {
+    el = document.createElement('iframe'); el.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation allow-popups'); el.allow = 'fullscreen'; el.allowFullscreen = true;
+    el.className = d.type === 'video' ? 'vid' : 'tall'; el.src = e.src;
+  } else if (e && e.video) { el = document.createElement('video'); el.controls = true; el.src = e.video; }
+  else if (e && e.img) { el = document.createElement('img'); el.src = e.img; el.alt = d.titre; }
+  else return;
+  box.className = 'vw'; box.appendChild(el);
+  if (el.requestFullscreen) { const b = document.createElement('button'); b.className = 'l'; b.textContent = '⛶ Plein écran'; b.onclick = () => el.requestFullscreen(); box.appendChild(b); }
 }
 const stepsOf = () => cur.sequences.map(s => ({ s })).concat(cur.ressources.length ? [{ res: true }] : []);
 function moduleBody(id, s, n) {
@@ -160,36 +203,66 @@ function moduleBody(id, s, n) {
   return `<div class="card"><h3>${s.virtual ? '' : 'Module ' + n + ' — '}${esc(s.titre)} ${s.complete ? '<span class="ok">✔ terminé</span>' : ''}</h3>
     ${req.length ? `<p class="mu">Documents lus : <b>${s.lus} / ${s.total}</b></p>` : ''}<button class="l" onclick="replayIntro('${id}','${s.id}')">▶ Revoir l’introduction</button></div>`
     + req.map(d => docCard(id, d)).join('')
-    + (opt.length ? '<p class="mu">Ressources facultatives de ce module :</p>' + opt.map(d => docCard(id, d)).join('') : '')
+    + (opt.length ? '<p class="mu">Ressources complémentaires de ce module (facultatives, non liées au cours) :</p>' + opt.map(d => docCard(id, d)).join('') : '')
     + (q ? `<div class="card"><b>📝 Quiz du module</b> <span class="mu">(${q.n} question${q.n > 1 ? 's' : ''}${q.seuil > 0 ? ' · réussite à partir de ' + q.seuil + ' %' : ''})</span>`
       + (q.reussi ? `<p class="ok">✔ Quiz réussi : ${q.meilleur.score} / ${q.meilleur.total}</p><button class="s" onclick="openCourse('${id}','quiz:${s.id}')">Revoir ma correction</button>`
         : !s.lu ? '<p class="mu">🔒 Le quiz s’ouvre quand tous les documents obligatoires de ce module sont marqués comme lus.</p>'
         : q.essais ? `<p class="er">Dernier essai : ${q.dernier.score} / ${q.dernier.total} — il faut ${q.seuil} % pour passer au module suivant.</p><button onclick="openCourse('${id}','quiz:${s.id}')">Voir la correction et réessayer</button>`
         : `<p class="mu">Tous les documents sont lus : le quiz est ouvert.${q.seuil > 0 ? ' Il faut le réussir pour débloquer le module suivant.' : ''}</p><button onclick="openCourse('${id}','quiz:${s.id}')">Passer le quiz</button>`) + '</div>' : '');
 }
+/** Parcours du cours : pré-test (facultatif ou non) → modules (photo + titre ; un clic ouvre le module) → évaluation finale. */
+function overviewHtml(id) {
+  const st = stepsOf(), V = cur.verrous; let n = 0, cs = [];
+  const card = o => `<div class="card hc mcard ${o.lock ? 'mlk' : ''}" ${o.lock ? '' : `onclick="${o.go}" role="button" tabindex="0"`}><div class="cov ${o.img ? '' : 'ph'}">${o.img ? `<img src="${esc(o.img)}" alt="" loading="lazy">` : `<span>${o.ph}</span>`}<div class="cap"><b>${esc(o.t)}</b></div>${o.lock ? '<div class="lkm">🔒</div>' : ''}</div><p class="mu" style="margin:0">${o.s}</p></div>`;
+  const pre = cur.resultats['Pré-test'], post = cur.resultats['Post-test'];
+  if (cur.nbQuestions['Pré-test']) cs.push(card({ t: 'Pré-test', ph: '🧪', go: `openCourse('${id}','Pré-test')`, s: pre ? `<span class="ok">✔ Terminé · ${pre.score} / ${pre.total}</span>` : cur.pretestFacultatif ? 'Facultatif · à passer si vous le souhaitez' : 'À passer en premier' }));
+  st.forEach((x, i) => {
+    if (x.res) return cs.push(card({ t: 'Ressources complémentaires', ph: '📎', go: `docsTab('${id}',${i})`, s: 'Facultatif · ' + cur.ressources.length + ' document(s)' }));
+    const q = x.s; if (!q.virtual) n++;
+    cs.push(card({ t: q.titre, img: q.image, ph: q.virtual ? '📖' : n, lock: q.verrouille, go: `docsTab('${id}',${i})`,
+      s: (q.complete ? '<span class="ok">✔ Terminé</span>' : q.verrouille ? 'Verrouillé' : 'En cours') + (q.total ? ` · ${q.lus}/${q.total} document(s)` : '') + (q.quiz ? ` · quiz ${q.quiz.reussi ? 'réussi' : 'à passer'}` : '') }));
+  });
+  if (cur.nbQuestions['Post-test']) cs.push(card({ t: 'Évaluation finale (post-test)', ph: '🏁', lock: V.post && !post, go: `openCourse('${id}','Post-test')`,
+    s: post ? `<span class="ok">✔ Terminé · ${post.score} / ${post.total}</span>` : V.post ? 'Se débloque quand tous les modules sont terminés' : 'Débloqué : à passer' }));
+  return `<div class="grid">${cs.join('')}</div>`;
+}
+let modCourse = null;
 function docsTab(id, idx) {
   if (cur.verrous.docs) return $('#tab').innerHTML = `<div class="card"><b>🔒 Cours verrouillé</b><p class="mu">Passez d’abord le pré-test : le contenu du cours s’affichera ensuite.</p><button onclick="openCourse('${id}','Pré-test')">Aller au pré-test</button></div>`;
+  if (cur.mode !== 'modules') return docsSimple(id);
+  if (modCourse !== id) { modIdx = null; modCourse = id; }
   const st = stepsOf(), V = cur.verrous, blocs = cur.blocs.map(b => `<div class="card">${b.titre ? '<b>' + esc(b.titre) + '</b><br>' : ''}${esc(b.texte).replace(/\n/g, '<br>')}</div>`).join('');
-  const postBtn = !V.post && cur.nbQuestions['Post-test'] && !cur.resultats['Post-test'] ? `<button onclick="openCourse('${id}','Post-test')">Passer au post-test ▸</button>` : '';
-  if (!st.length) return $('#tab').innerHTML = blocs + '<p class="mu">Aucun contenu pour le moment.</p>' + postBtn;
-  if (idx === undefined) { const f = st.findIndex(x => x.s && !x.s.complete && !x.s.verrouille); idx = modIdx !== null && modIdx < st.length && modIdx >= 0 ? modIdx : (f >= 0 ? f : st.length - 1); }
+  const postBtn = !V.post && cur.nbQuestions['Post-test'] && !cur.resultats['Post-test'] ? `<button onclick="openCourse('${id}','Post-test')">Passer à l’évaluation finale ▸</button>` : '';
+  if (idx === undefined) idx = modIdx;
+  if (idx === null || idx === -1 || !st.length || idx >= st.length) { modIdx = null; return $('#tab').innerHTML = blocs + '<p class="mu">Choisissez une étape : cliquez sur la photo d’un module pour l’ouvrir. Chaque module se termine par un quiz éventuel qui ouvre le suivant ; le cours se conclut par l’évaluation finale.</p>' + overviewHtml(id) + (st.length ? '' : '<p class="mu">Aucun module pour le moment.</p>'); }
   if (st[idx].s && st[idx].s.verrouille) idx = Math.max(0, st.findIndex(x => x.s && x.s.verrouille) - 1);
   modIdx = idx;
   let n = 0; const num = st.map(x => x.s && !x.s.virtual ? ++n : 0);
-  const stepper = `<div class="steps">${st.map((x, i) => x.res ? `<button class="${i === idx ? 'on' : ''}" onclick="docsTab('${id}',${i})">📎 Ressources</button>`
+  const stepper = `<button class="l" onclick="docsTab('${id}',-1)">← Tous les modules</button><div class="steps">${st.map((x, i) => x.res ? `<button class="${i === idx ? 'on' : ''}" onclick="docsTab('${id}',${i})">📎 Ressources</button>`
     : `<button class="${i === idx ? 'on' : ''} ${x.s.complete ? 'ok2' : ''}" ${x.s.verrouille ? 'disabled' : ''} onclick="docsTab('${id}',${i})" title="${esc(x.s.titre)}">${x.s.verrouille ? '🔒' : x.s.complete ? '✔' : ''} ${x.s.virtual ? 'Intro' : 'Module ' + num[i]}</button>`).join('')}</div>`;
   const cu = st[idx], nx = st[idx + 1], pv = st[idx - 1];
   const nextOk = nx && !(nx.s && nx.s.verrouille);
   let body;
-  if (cu.res) body = '<h3>Ressources complémentaires</h3><p class="mu">Facultatives : à consulter librement, sans effet sur l’accès au post-test.</p>' + cur.ressources.map(d => docCard(id, d)).join('');
+  if (cu.res) body = '<h3>Ressources complémentaires</h3><p class="mu">Facultatives : à consulter librement, sans effet sur l’accès à l’évaluation finale.</p>' + cur.ressources.map(d => docCard(id, d)).join('');
   else if (!introSeen(id, cu.s.id)) body = introHtml();
   else body = moduleBody(id, cu.s, num[idx]);
   const hint = nx && !nextOk ? '<p class="mu" style="text-align:right">Terminez ce module (documents lus et quiz réussi) pour ouvrir le suivant.</p>' : '';
-  $('#tab').innerHTML = blocs + stepper + body
+  $('#tab').innerHTML = stepper + body
     + `<div class="nav2"><button class="s" ${pv ? '' : 'disabled'} onclick="docsTab('${id}',${idx - 1})">◂ Module précédent</button>`
     + (nx ? `<button ${nextOk ? '' : 'disabled'} onclick="docsTab('${id}',${idx + 1})">Module suivant ▸</button>` : postBtn || '<span></span>') + '</div>' + hint
-    + `<p class="mu">Modules terminés : ${V.seqTotal - V.seqRestantes} / ${V.seqTotal}${V.seqTotal ? (V.post ? ' — le post-test s’ouvre quand tous les modules sont terminés.' : ' — le post-test est débloqué.') : ''}</p>`;
+    + `<p class="mu">Modules terminés : ${V.seqTotal - V.seqRestantes} / ${V.seqTotal}${V.seqTotal ? (V.post ? ' — l’évaluation finale s’ouvre quand tous les modules sont terminés.' : ' — l’évaluation finale est débloquée.') : ''}</p>`;
   if (!cu.res && !introSeen(id, cu.s.id)) introStart(id, cu.s);
+}
+/** Cours simple (une seule présentation, sans modules) : liste de documents, comme à l'origine. */
+function docsSimple(id) {
+  const docs = cur.sequences.reduce((a, s) => a.concat(s.documents), []), req = docs.filter(d => !d.facultatif), opt = docs.filter(d => d.facultatif).concat(cur.ressources), V = cur.verrous;
+  const lus = req.filter(d => d.lu).length, tous = lus === req.length;
+  const bar = req.length ? `<div class="card"><b>Documents lus : ${lus} / ${req.length}</b><p class="mu">${tous ? 'Tous les documents sont marqués comme lus : le post-test est débloqué.'
+    : 'Ouvrez chaque document, lisez-le en entier, puis cliquez sur « J’ai lu ce document en entier ». Le post-test s’ouvrira quand tous seront marqués.'}</p>${tous && !V.post && cur.nbQuestions['Post-test'] && !cur.resultats['Post-test'] ? `<button onclick="openCourse('${id}','Post-test')">Passer au post-test</button>` : ''}</div>` : '';
+  $('#tab').innerHTML = bar + cur.blocs.map(b => `<div class="card">${b.titre ? '<b>' + esc(b.titre) + '</b><br>' : ''}${esc(b.texte).replace(/\n/g, '<br>')}</div>`).join('')
+    + (req.length && opt.length ? '<h3>Documents à lire</h3>' : '') + req.map(d => docCard(id, d)).join('')
+    + (opt.length ? '<h3>Ressources complémentaires</h3><p class="mu">Facultatives : à consulter librement, sans effet sur l’accès au post-test.</p>' + opt.map(d => docCard(id, d)).join('') : '')
+    || '<p class="mu">Aucun contenu pour le moment.</p>';
 }
 
 /* ---------- Introduction des modules : personnages animés (SVG + CSS, sans serveur) ---------- */
@@ -274,8 +347,8 @@ function corrHtml(c) {
 }
 function testHome(id, ph) {
   const res = cur.resultats[ph], n = cur.nbQuestions[ph];
-  if (!res && lockOf(ph)) return $('#tab').innerHTML = `<div class="card"><b>🔒 Post-test verrouillé</b><p class="mu">${cur.verrous.preManquant ? 'Passez d’abord le pré-test, puis terminez chaque module du cours (documents lus et quiz réussi).'
-    : `Il vous reste ${cur.verrous.seqRestantes} module(s) à terminer (documents lus et marqués, puis quiz réussi).`}</p><button onclick="openCourse('${id}','${cur.verrous.preManquant ? 'Pré-test' : 'docs'}')">${cur.verrous.preManquant ? 'Aller au pré-test' : 'Aller au cours'}</button></div>`;
+  if (!res && lockOf(ph)) return $('#tab').innerHTML = `<div class="card"><b>🔒 Post-test verrouillé</b><p class="mu">${cur.verrous.preManquant ? (cur.mode === 'modules' ? 'Passez d’abord le pré-test, puis terminez chaque module du cours (documents lus et quiz réussi).' : 'Passez d’abord le pré-test, puis lisez et marquez tous les documents du cours.')
+    : cur.mode === 'modules' ? `Il vous reste ${cur.verrous.seqRestantes} module(s) à terminer (documents lus et marqués, puis quiz réussi).` : 'Ouvrez, lisez en entier et marquez comme lus tous les documents du cours.'}</p><button onclick="openCourse('${id}','${cur.verrous.preManquant ? 'Pré-test' : 'docs'}')">${cur.verrous.preManquant ? 'Aller au pré-test' : 'Aller au cours'}</button></div>`;
   $('#tab').innerHTML = res ? `<div class="card"><b>${ph} terminé</b><p class="ok">Score : ${res.score} / ${res.total}</p></div>${corrHtml(res.corrige)}`
     : n ? `<div class="card">${ph === 'Pré-test' && cur.pretestFacultatif ? '<p class="mu">Ce pré-test est facultatif : le cours est accessible sans le passer.</p>' : ''}<p>${n} question(s), 25 minutes. Vous ne pouvez passer ce test qu’une fois ; votre pseudonyme (<b>${esc(pseudo)}</b>) est votre code de travail.</p><button onclick="startTest('${id}','${ph}')">Commencer le ${ph.toLowerCase()}</button></div>`
     : '<p class="mu">Ce test n’est pas encore prêt.</p>';
@@ -357,16 +430,16 @@ function admin() {
 async function adminIn() { adminPw = $('#aw').value; const r = await api('adminLogin', adminPw); r.ok ? adminHome() : ($('#m').textContent = r.message); }
 async function adminHome() {
   const r = await api('adminOverview', adminPw); if (!r.ok) return alert(r.message);
-  view(`<h2>Administration</h2><div class="card"><h3>Nouveau cours</h3><input id="ct" placeholder="Titre"><textarea id="cd" rows="2" placeholder="Description"></textarea><button onclick="newCourse()">Créer le cours</button>
+  view(`<h2>Administration</h2><div class="card"><h3>Nouveau cours</h3><input id="ct" placeholder="Titre"><textarea id="cd" rows="2" placeholder="Description"></textarea><select id="cm"><option value="modules">Par modules (séquences avec quiz et introduction animée)</option><option value="simple">Simple (une seule présentation)</option></select><button onclick="newCourse()">Créer le cours</button>
   <button class="s" onclick="importMPE()">Importer le cours MPE (20 questions)</button></div>
   ${r.cours.map(c => `<div class="card"><b>${esc(c.titre)}</b> ${c.actif ? '' : '<span class="er">(masqué)</span>'}<p class="mu">${c.inscrits} inscrit(s) · ${c.documents} document(s) · ${c.pre} Q pré-test · ${c.post} Q post-test · moyenne pré ${c.moyPre ?? '–'} % / post ${c.moyPost ?? '–'} %</p>
   <button class="s" onclick="adminCourse('${c.id}')">Gérer / modifier</button> <button class="l" onclick="delCourse('${c.id}')">Supprimer</button></div>`).join('')}
   <p class="mu">Les utilisateurs et leurs mots de passe sont dans l’onglet « Users » du Google Sheet, modifiables à la main.</p>`);
 }
-async function newCourse() { const r = await api('adminSaveCourse', adminPw, { titre: $('#ct').value, description: $('#cd').value }); r.ok ? adminCourse(r.id) : alert(r.message); }
+async function newCourse() { const r = await api('adminSaveCourse', adminPw, { titre: $('#ct').value, description: $('#cd').value, mode: $('#cm').value }); r.ok ? adminCourse(r.id) : alert(r.message); }
 async function importMPE() { if (!confirm('Importer le cours MPE avec ses 20 questions en pré-test et en post-test ?')) return; const r = await api('adminImporterMPE', adminPw); alert(r.message || 'Fait.'); adminHome(); }
 async function saveCourse(id) {
-  const r = await api('adminSaveCourse', adminPw, { id, titre: $('#ct').value, description: $('#cd').value, actif: $('#ca').checked, pretest: $('#cpre').value, seuil: $('#cseuil').value });
+  const r = await api('adminSaveCourse', adminPw, { id, titre: $('#ct').value, description: $('#cd').value, actif: $('#ca').checked, mode: $('#cmode').value, pretest: $('#cpre').value, seuil: $('#cseuil').value });
   r.ok ? (alert('Enregistré.'), adminCourse(id)) : alert(r.message);
 }
 async function delCourse(id) {
@@ -392,22 +465,30 @@ async function adminCourse(id) {
   <label>Image de présentation du cours (affichée à la place du simple titre ; un clic dessus ouvre le cours)</label>
   ${c.image ? `<div class="cov big"><img src="${esc(c.image)}" alt=""></div>` : '<p class="mu">Aucune image pour le moment.</p>'}
   <input id="cimg" type="file" accept="image/*"><input id="cimu" placeholder="… ou lien d’une image (https://…)"><button class="s" onclick="saveImage('${id}')">Enregistrer l’image</button>${c.image ? ' <button class="l" onclick="saveImage(\'' + id + '\',true)">Retirer l’image</button>' : ''}
+  <label>Organisation du cours</label><select id="cmode"><option value="simple" ${c.mode === 'modules' ? '' : 'selected'}>Simple : une seule présentation (documents à lire, puis post-test)</option><option value="modules" ${c.mode === 'modules' ? 'selected' : ''}>Par modules : plusieurs séquences avec quiz et introduction animée</option></select>
   <label>Pré-test</label><select id="cpre"><option value="obligatoire" ${c.pretest === 'facultatif' ? '' : 'selected'}>Obligatoire avant d’accéder au cours</option><option value="facultatif" ${c.pretest === 'facultatif' ? 'selected' : ''}>Facultatif : le cours est accessible tout de suite</option></select>
-  <label>Note de réussite des quiz (%) — le module suivant ne s’ouvre qu’après un quiz réussi ; 0 = aucune exigence</label><input id="cseuil" type="number" min="0" max="100" value="${c.seuil}"><button onclick="saveCourse('${id}')">Enregistrer</button></div>
+  <label>Note de réussite des quiz de module (%) — le module suivant ne s’ouvre qu’après un quiz réussi ; 0 = aucune exigence</label><input id="cseuil" type="number" min="0" max="100" value="${c.seuil}"><button onclick="saveCourse('${id}')">Enregistrer</button></div>
   <div class="card"><h3>Texte sur la page du cours</h3>${r.blocs.map(b => row('Blocs', b.id, '<b>' + esc(b.titre) + '</b> ' + esc(b.texte).slice(0, 80))).join('')}
   <input id="bt" placeholder="Titre (facultatif)"><textarea id="bx" rows="3" placeholder="Texte : objectifs, consignes, résumé…"></textarea><button onclick="addBloc('${id}')">Ajouter</button></div>
-  <div class="card"><h3>Modules du cours</h3><p class="mu">Un cours est une suite de modules : l’apprenant lit les documents obligatoires d’une séquence, passe son quiz, puis accède à le module suivante. Le post-test s’ouvre après la dernière. Glissez plusieurs fichiers à la fois dans la zone voulue (ou cliquez sur « choisissez-les »), et glissez un document existant d’une zone à l’autre pour changer son statut ou sa séquence.</p>
+  ${c.mode !== 'modules' ? '<div class="card"><h3>Organisation</h3><p class="mu">Ce cours est une présentation unique (sans modules). Pour créer des modules avec quiz et introductions animées, choisissez « Par modules » dans « Organisation du cours » ci-dessus, puis enregistrez.</p></div>' : `<div class="card"><h3>Modules du cours</h3><p class="mu">Un cours est une suite de modules : l’apprenant lit les documents obligatoires d’une séquence, passe son quiz, puis accède à le module suivante. Le post-test s’ouvre après la dernière. Glissez plusieurs fichiers à la fois dans la zone voulue (ou cliquez sur « choisissez-les »), et glissez un document existant d’une zone à l’autre pour changer son statut ou sa séquence.</p>
   ${r.sequences.map((x, i) => `<div class="card" style="border-color:var(--pr)"><h3>Module ${i + 1} — ${esc(x.titre)}</h3>
     <button class="l" ${i ? '' : 'disabled'} onclick="moveSeq('${id}','${x.id}',-1)">↑ Monter</button><button class="l" ${i < r.sequences.length - 1 ? '' : 'disabled'} onclick="moveSeq('${id}','${x.id}',1)">↓ Descendre</button><button class="l" onclick="renameSeq('${id}','${x.id}')">Renommer</button><button class="l" onclick="delSeq('${id}','${x.id}')">Supprimer</button>
     ${dzone(id, x.id, false, '📌 Documents à lire (obligatoires)', r.documents.filter(d => d.sequence === x.id && !d.facultatif))}${dzone(id, x.id, true, '📎 Ressources facultatives', r.documents.filter(d => d.sequence === x.id && d.facultatif))}
     <label>🎭 Introduction racontée par Awa et Kofi (une réplique par ligne ; commencez par « Awa: » ou « Kofi: » pour choisir qui parle ; vide = introduction automatique)</label><textarea id="si_${x.id}" rows="4">${esc(x.intro)}</textarea><button class="s" onclick="saveIntro('${id}','${x.id}')">Enregistrer l’introduction</button>
+    <label>🖼️ Photo du module (affichée avec son titre sur la page du cours ; un clic dessus ouvre le module)</label>${x.image ? `<div class="cov big"><img src="${esc(x.image)}" alt=""></div>` : ''}<input id="mi_${x.id}" type="file" accept="image/*"><button class="s" onclick="saveModImage('${id}','${x.id}')">Enregistrer la photo</button>${x.image ? ` <button class="l" onclick="saveModImage('${id}','${x.id}',true)">Retirer la photo</button>` : ''}
     <p class="mu">📝 Quiz : ${r.questions.filter(q => q.phase === 'Quiz' && q.sequence === x.id).length} question(s). Ajoutez-les dans « Questions » ci-dessous (choisir « Quiz — ${esc(x.titre)} »).</p></div>`).join('') || '<p class="mu">Aucune séquence pour le moment.</p>'}
-  <input id="sn" placeholder="Titre du nouveau module (ex. Présentation 2 : le prélèvement)"><button onclick="addSeq('${id}')">Ajouter un module</button></div>
-  <div class="card"><h3>Documents hors module</h3><p class="mu">Les documents obligatoires déposés ici forment une introduction lue avant le module 1. Les ressources facultatives sont consultables par tous dès le pré-test passé.</p>
-  ${dzone(id, '', false, '📌 Introduction (lecture obligatoire)', r.documents.filter(d => !d.sequence && !d.facultatif))}${dzone(id, '', true, '📎 Ressources générales (facultatives)', r.documents.filter(d => !d.sequence && d.facultatif))}
-  <h4>Ajouter un lien</h4><select id="dsq"><option value="">Hors module</option>${r.sequences.map((x, i) => `<option value="${x.id}">Module ${i + 1} — ${esc(x.titre)}</option>`).join('')}</select><input id="dt" placeholder="Titre du document"><input id="du" placeholder="Lien (Drive, YouTube, site…)"><label class="o"><input type="checkbox" id="dfac"> Facultatif (pas de lecture obligatoire)</label><button onclick="addDoc('${id}')">Ajouter le lien</button></div>
+  <input id="sn" placeholder="Titre du nouveau module (ex. Présentation 2 : le prélèvement)"><button onclick="addSeq('${id}')">Ajouter un module</button></div>`}
+  <div class="card"><h3>${c.mode === 'modules' ? 'Documents hors module' : 'Documents du cours'}</h3><p class="mu">${c.mode === 'modules' ? 'Les documents obligatoires déposés ici forment une introduction lue avant le module 1. Les ressources facultatives sont consultables par tous dès le pré-test passé.' : 'Glissez plusieurs fichiers à la fois dans la zone voulue (ou cliquez sur « choisissez-les »). Les documents obligatoires doivent être lus et marqués avant le post-test ; les ressources facultatives restent consultables librement.'}</p>
+  ${dzone(id, '', false, c.mode === 'modules' ? '📌 Introduction (lecture obligatoire)' : '📌 Documents à lire (obligatoires)', r.documents.filter(d => !d.sequence && !d.facultatif))}${dzone(id, '', true, c.mode === 'modules' ? '📎 Ressources générales (facultatives)' : '📎 Ressources facultatives', r.documents.filter(d => !d.sequence && d.facultatif))}
+  <h4>Ajouter un lien</h4><select id="dsq" ${c.mode === 'modules' ? '' : 'style="display:none"'}><option value="">Hors module</option>${r.sequences.map((x, i) => `<option value="${x.id}">Module ${i + 1} — ${esc(x.titre)}</option>`).join('')}</select><input id="dt" placeholder="Titre du document"><input id="du" placeholder="Lien (Drive, YouTube, site…)"><label class="o"><input type="checkbox" id="dfac"> Facultatif (pas de lecture obligatoire)</label><button onclick="addDoc('${id}')">Ajouter le lien</button></div>
+  <div class="card" id="pgcard"><h3>🎭 Leçon HTML (module totalement en HTML)</h3><p class="mu">Écrivez ou collez une page HTML complète : mise en page libre, personnages animés, photos, vidéos, JavaScript. Elle s’affiche dans l’application, dans un cadre isolé et sécurisé. (PHP n’est pas pris en charge par l’hébergement actuel : une page HTML/JavaScript donne le même résultat pour l’apprenant.)</p><p class="mu" id="pgmode"></p><input type="hidden" id="pgid">
+  <select id="pgs" ${c.mode === 'modules' ? '' : 'style="display:none"'}><option value="">Hors module</option>${r.sequences.map((x, i) => `<option value="${x.id}">Module ${i + 1} — ${esc(x.titre)}</option>`).join('')}</select>
+  <input id="pgt" placeholder="Titre de la leçon"><label class="o"><input type="checkbox" id="pgf"> Facultative (pas de lecture obligatoire)</label>
+  <textarea id="pgh" rows="10" style="font-family:monospace;font-size:.85em" placeholder="<html>…</html>"></textarea>
+  <button class="s" onclick="$('#pgh').value = pageTemplate()">Insérer un modèle (avec Awa)</button> <input id="pgimg" type="file" accept="image/*"><button class="s" onclick="pageImg('${id}')">Insérer une image dans le code</button>
+  <button class="s" onclick="previewPage()">Aperçu</button> <button onclick="savePage('${id}')">Enregistrer la leçon</button><iframe id="pgprev" sandbox="allow-scripts allow-popups" style="display:none;width:100%;height:320px;border:1px solid var(--bd);border-radius:8px;margin-top:8px;background:#fff"></iframe></div>
   <div class="card"><h3>Questions (${r.questions.length})</h3><div style="max-height:220px;overflow:auto">${r.questions.map(q => row('Questions', q.id, `<span class="mu">${q.phase === 'Quiz' ? 'Quiz · ' + esc((r.sequences.filter(x => x.id === q.sequence)[0] || {}).titre || '?') : q.phase} · ${q.type}</span> ${esc(q.question).slice(0, 70)}`)).join('')}</div>
-  <select id="qp"><option value="Pré-test">Pré-test</option><option value="Post-test">Post-test</option>${r.sequences.map(x => `<option value="Quiz:${x.id}">Quiz — ${esc(x.titre)}</option>`).join('')}</select><textarea id="qq" rows="2" placeholder="Question"></textarea><textarea id="qo" rows="4" placeholder="Un choix par ligne"></textarea>
+  <select id="qp"><option value="Pré-test">Pré-test</option><option value="Post-test">Post-test</option>${c.mode === 'modules' ? r.sequences.map(x => `<option value="Quiz:${x.id}">Quiz — ${esc(x.titre)}</option>`).join('') : ''}</select><textarea id="qq" rows="2" placeholder="Question"></textarea><textarea id="qo" rows="4" placeholder="Un choix par ligne"></textarea>
   <input id="qb" placeholder="Numéros des bonnes réponses, ex. 2 ou 1,3"><textarea id="qe" rows="2" placeholder="Explication (affichée après le test)"></textarea><button onclick="addQ('${id}')">Ajouter la question</button></div>
   <div class="card"><h3>Importer des questions (fichier CSV)</h3><p class="mu">Colonnes : phase (Pré-test, Post-test ou Quiz), sequence (pour les quiz : numéro du module, 1 = première, ou son titre), type, question, options, bonnes, explication, donnees.</p>
   <input id="qf" type="file" accept=".csv,.txt"><label class="o"><input type="checkbox" id="qr"> Remplacer les questions déjà présentes pour les phases du fichier</label><button onclick="importQ('${id}')">Importer le fichier</button></div>
@@ -433,7 +514,7 @@ async function importQ(id) {
   alert(r.ajoutees + ' question(s) importée(s).' + (r.erreurs.length ? '\n\nÀ corriger :\n' + r.erreurs.join('\n') : '')); adminCourse(id);
 }
 async function addBloc(id) { const r = await api('adminAddBloc', adminPw, id, $('#bt').value, $('#bx').value); r.ok ? adminCourse(id) : alert(r.message); }
-const docRow = (d, id) => `<div class="msg" draggable="true" ondragstart="event.dataTransfer.setData('text/doc', '${d.id}')">⠿ 📄 ${esc(d.titre)} <button class="l" onclick="edit('Documents','${d.id}','${id}')">Modifier</button><button class="l" onclick="del('Documents','${d.id}','${id}')">Supprimer</button></div>`;
+const docRow = (d, id) => `<div class="msg" draggable="true" ondragstart="event.dataTransfer.setData('text/doc', '${d.id}')">⠿ ${KIND[d.type] || '🔗'} ${esc(d.titre)} ${d.type === 'page' ? `<button class="l" onclick="editPage('${id}','${d.id}')">Code HTML</button>` : ''}<button class="l" onclick="edit('Documents','${d.id}','${id}')">Modifier</button><button class="l" onclick="del('Documents','${d.id}','${id}')">Supprimer</button></div>`;
 const dzone = (id, sid, fac, titre, list) => `<div class="dz" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="dzDrop(event,'${id}','${sid}',${fac})">
   <b>${titre}</b>${list.map(d => docRow(d, id)).join('') || '<p class="mu">Aucun document.</p>'}
   <p class="mu">Déposez des fichiers ici, ou <label class="lk">choisissez-les<input type="file" multiple hidden onchange="uploadFiles('${id}','${sid}',${fac},this.files)"></label>.</p><div class="mu" id="up_${sid || 'x'}_${fac ? 1 : 0}"></div></div>`;
@@ -471,6 +552,45 @@ async function saveImage(id, remove) {
   if (remove) img = { url: '' }; else if (f) { try { img = { fichier: { nom: f.name.replace(/\.[^.]+$/, '') + '.jpg', mime: 'image/jpeg', b64: await resizeImg(f, 1000) } }; } catch (e) { return alert(e.message); } }
   else if (url) img = { url }; else return alert('Choisissez une image ou collez un lien.');
   const r = await api('adminSetCourseImage', adminPw, id, img); r.ok ? adminCourse(id) : alert(r.message);
+}
+async function saveModImage(id, sid, remove) {
+  const f = $('#mi_' + sid).files[0]; let img;
+  if (remove) img = { url: '' }; else if (f) { try { img = { fichier: { nom: f.name.replace(/\.[^.]+$/, '') + '.jpg', mime: 'image/jpeg', b64: await resizeImg(f, 1000) } }; } catch (e) { return alert(e.message); } } else return alert('Choisissez une image.');
+  const r = await api('adminSetModuleImage', adminPw, id, sid, img); r.ok ? adminCourse(id) : alert(r.message);
+}
+/* ---- Leçons HTML (module entièrement en HTML : personnages, photos, mise en page libre) ---- */
+const pageTemplate = () => `<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font-family:system-ui,sans-serif;margin:0;padding:16px;background:#f4faf7;color:#1d2733;line-height:1.55}h1{color:#0b6e4f}
+.scene{display:flex;gap:14px;align-items:flex-end;margin:12px 0}.perso{width:110px;flex:none}.perso svg{width:100%;height:auto}
+.bulle{background:#fff;border:2px solid #0b6e4f;border-radius:14px;padding:10px 14px;flex:1}img{max-width:100%;border-radius:10px}
+.body{animation:bob 3s ease-in-out infinite}.eye,.mouth,.arm{transform-box:fill-box}.eye{transform-origin:center;animation:blink 4.5s infinite}
+.mouth{transform-origin:center;animation:talk .25s ease-in-out infinite alternate}.arm{transform-origin:50% 0;animation:wave .7s ease-in-out infinite alternate}
+@keyframes bob{50%{transform:translateY(-4px)}}@keyframes blink{0%,93%,100%{transform:scaleY(1)}96%{transform:scaleY(.1)}}
+@keyframes talk{to{transform:scaleY(2.6)}}@keyframes wave{from{transform:rotate(-8deg)}to{transform:rotate(-55deg)}}
+</style></head><body>
+<h1>Titre de la leçon</h1>
+<div class="scene"><div class="perso">${AWA}</div><div class="bulle">Bonjour ! Voici le contenu de cette leçon…</div></div>
+<h2>Première partie</h2>
+<p>Votre texte ici. Vous pouvez aussi ajouter des images (bouton « Insérer une image »), des vidéos, des tableaux, du JavaScript…</p>
+</body></html>`;
+function previewPage() { const f = $('#pgprev'); f.style.display = 'block'; f.srcdoc = $('#pgh').value; }
+async function pageImg(id) {
+  const f = $('#pgimg').files[0]; if (!f) return alert('Choisissez une image.');
+  let b64; try { b64 = await resizeImg(f, 1200); } catch (e) { return alert(e.message); }
+  const r = await api('adminUploadImage', adminPw, id, { fichier: { nom: f.name.replace(/\.[^.]+$/, '') + '.jpg', mime: 'image/jpeg', b64 } }); if (!r.ok) return alert(r.message);
+  const ta = $('#pgh'), tag = `<img src="${r.url}" alt="">`, i = typeof ta.selectionStart === 'number' ? ta.selectionStart : ta.value.length;
+  ta.value = ta.value.slice(0, i) + tag + ta.value.slice(i); $('#pgimg').value = '';
+}
+async function savePage(id) {
+  const html = $('#pgh').value, titre = $('#pgt').value, did = $('#pgid').value;
+  const r = did ? await api('adminSavePage', adminPw, did, { titre, html }) : await api('adminAddPage', adminPw, id, { titre, html, facultatif: $('#pgf').checked, sequence: $('#pgs').value });
+  r.ok ? (alert('Leçon enregistrée.'), adminCourse(id)) : alert(r.message);
+}
+async function editPage(id, did) {
+  const r = await api('adminGetPage', adminPw, did); if (!r.ok) return alert(r.message);
+  $('#pgid').value = did; $('#pgt').value = r.titre; $('#pgh').value = r.html; $('#pgmode').textContent = 'Modification de la leçon « ' + r.titre + ' » (pour en créer une nouvelle, rechargez la page du cours).'; $('#pgcard').scrollIntoView();
 }
 async function saveIntro(id, sid) { const g = admDet.sequences.filter(x => x.id === sid)[0], r = await api('adminSaveSequence', adminPw, id, { id: sid, titre: g.titre, intro: $('#si_' + sid).value }); r.ok ? (alert('Introduction enregistrée.'), adminCourse(id)) : alert(r.message); }
 async function moveSeq(id, sid, d) { await api('adminMoveSequence', adminPw, id, sid, d); adminCourse(id); }

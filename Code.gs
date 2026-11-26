@@ -14,10 +14,12 @@ const TABS = {
   Users: ['id', 'pseudo', 'motdepasse', 'jeton', 'cree'],
   // pretest : « obligatoire » (défaut, vide) ou « facultatif » (cours accessible sans pré-test) ; seuil : note de réussite des quiz en % (vide = 70, 0 = aucune exigence)
   // cree = date de création (pour signaler un nouveau cours) ; image = adresse de l'image de couverture
-  Cours: ['id', 'titre', 'description', 'actif', 'pretest', 'seuil', 'cree', 'image'],
+  // mode : « modules » (séquences : documents puis quiz, introduction animée) ; vide ou « simple » = cours d'une seule présentation, sans modules (comportement d'origine)
+  Cours: ['id', 'titre', 'description', 'actif', 'pretest', 'seuil', 'cree', 'image', 'mode'],
   // facultatif = TRUE : ressource complémentaire, consultable par tous les inscrits mais sans obligation de lecture
   // sequence = id de la séquence ; vide = document hors séquence
-  Documents: ['id', 'cours', 'titre', 'url', 'facultatif', 'sequence'],
+  // type : video, word, pdf, ppt, excel, image, page (leçon HTML stockée dans Drive, url = « html:ID »), lien
+  Documents: ['id', 'cours', 'titre', 'url', 'facultatif', 'sequence', 'type'],
   // options = JSON ["A","B"] ; bonnes = JSON [0] (index à partir de 0, plusieurs = choix multiple)
   // type : single | multi | chart | rpt | dates | match ; donnees = JSON (contexte, tableaux, dates, appariements)
   Questions: ['id', 'cours', 'phase', 'type', 'question', 'options', 'bonnes', 'donnees', 'explication', 'sequence'], // phase « Quiz » : sequence = séquence concernée
@@ -30,7 +32,7 @@ const TABS = {
   Lectures: ['uid', 'cours', 'doc', 'ouvert', 'lu'],
   // Sequences : un cours = suite ordonnée de séquences (documents puis quiz). ordre = 1, 2, 3…
   // intro = texte de présentation dit par les personnages animés (une réplique par ligne, « Awa: » ou « Kofi: » pour choisir qui parle)
-  Sequences: ['id', 'cours', 'titre', 'ordre', 'intro']
+  Sequences: ['id', 'cours', 'titre', 'ordre', 'intro', 'image']
 };
 const PHASES = ['Pré-test', 'Post-test'];
 const PHASES_ALL = PHASES.concat('Quiz'); // Quiz = quiz de fin de séquence
@@ -38,7 +40,7 @@ const PHASES_ALL = PHASES.concat('Quiz'); // Quiz = quiz de fin de séquence
 const API = { login, me, profil, updateProfile, enroll, unenroll, course, openDoc, markDoc, startTest, submitTest,
   getMessages, postMessage, editMessage, deleteMessage,
   adminLogin, adminOverview, adminSaveCourse, adminAddDoc, adminAddQuestion,
-  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE: adminImporterMPE_, adminDeleteCourse, adminUpdate, adminImportQuestions, adminSaveSequence, adminMoveSequence, adminDeleteSequence, adminSetCourseImage, notifs };
+  adminCourseDetail, adminDelete, adminAddBloc, adminImporterMPE: adminImporterMPE_, adminDeleteCourse, adminUpdate, adminImportQuestions, adminSaveSequence, adminMoveSequence, adminDeleteSequence, adminSetCourseImage, adminSetModuleImage, adminUploadImage, adminAddPage, adminGetPage, adminSavePage, getPage, notifs };
 
 function doPost(e) {
   try {
@@ -161,18 +163,18 @@ function seqs_(cid) {
 function cfg_(cid) {
   const c = rows_('Cours').filter(x => S(x.id) === S(cid))[0] || {};
   let seuil = S(c.seuil).trim() === '' ? 70 : Number(c.seuil); if (!(seuil >= 0)) seuil = 70;
-  return { pretestFac: S(c.pretest).trim().toLowerCase() === 'facultatif', seuil: Math.min(100, seuil) };
+  return { pretestFac: S(c.pretest).trim().toLowerCase() === 'facultatif', seuil: Math.min(100, seuil), modules: S(c.mode).trim().toLowerCase() === 'modules' };
 }
 function plan_(uid, cid) {
   const cf = cfg_(cid);
   const preOk = cf.pretestFac || !questions_(cid, 'Pré-test').length || done_(uid, cid, 'Pré-test');
-  const real = seqs_(cid), ids = {}; real.forEach(s => ids[S(s.id)] = 1);
+  const real = cf.modules ? seqs_(cid) : [], ids = {}; /* cours simple : les modules éventuels sont ignorés */ real.forEach(s => ids[S(s.id)] = 1);
   const docs = rows_('Documents').filter(d => S(d.cours) === S(cid)), lec = lectures_(uid, cid);
   const libres = docs.filter(d => !ids[S(d.sequence)]);
   const qs = rows_('Questions').filter(q => S(q.cours) === S(cid) && q.phase === 'Quiz');
   const res = rows_('Resultats').filter(r => S(r.uid) === S(uid) && S(r.cours) === S(cid) && r.phase === 'Quiz');
   const seqs = libres.some(d => !opt_(d)) ? [{ id: '', titre: 'Introduction', virtual: true }] : [];
-  real.forEach(x => seqs.push({ id: S(x.id), titre: x.titre, intro: S(x.intro) }));
+  real.forEach(x => seqs.push({ id: S(x.id), titre: x.titre, intro: S(x.intro), image: S(x.image) }));
   let prev = true;
   const list = seqs.map(x => {
     const ds = x.virtual ? libres.filter(d => !opt_(d)) : docs.filter(d => S(d.sequence) === x.id);
@@ -183,7 +185,7 @@ function plan_(uid, cid) {
     const passed = !!best && (cf.seuil <= 0 || (best.total > 0 && 100 * best.score / best.total >= cf.seuil));
     const unlocked = preOk && prev, lu = lus === req.length, complete = unlocked && lu && (!nq || passed);
     prev = complete;
-    return { id: x.id, titre: x.titre, intro: x.intro || '', virtual: !!x.virtual, docs: ds, req, lus, nq, att: att.length, best, last, passed, unlocked, lu, complete };
+    return { id: x.id, titre: x.titre, image: x.image || '', intro: x.intro || '', virtual: !!x.virtual, docs: ds, req, lus, nq, att: att.length, best, last, passed, unlocked, lu, complete };
   });
   return { cf, preOk, list, lec, libres: libres.filter(opt_), postOk: preOk && prev };
 }
@@ -194,17 +196,17 @@ function course(tok, cid) {
   const res = {};
   rows_('Resultats').filter(r => S(r.uid) === S(u.id) && S(r.cours) === S(cid) && r.phase !== 'Quiz').forEach(r => res[r.phase] = { score: r.score, total: r.total, corrige: parseDetails_(r) });
   const p = plan_(u.id, cid);
-  const dOut = d => { const l = p.lec[S(d.id)]; return { id: S(d.id), titre: d.titre, url: d.url, facultatif: opt_(d), ouvert: !!(l && l.ouvert), lu: !!(l && l.lu) }; };
+  const dOut = d => { const l = p.lec[S(d.id)]; return { id: S(d.id), titre: d.titre, url: S(d.url).indexOf('html:') === 0 ? '' : d.url, type: S(d.type) || kind_(d.url), facultatif: opt_(d), ouvert: !!(l && l.ouvert), lu: !!(l && l.lu) }; };
   return { ok: true, id: S(c.id), titre: c.titre, description: c.description, image: S(c.image),
     // Contenu du cours envoyé seulement une fois le pré-test passé ; le contenu d'une séquence seulement quand elle est ouverte
     blocs: p.preOk ? rows_('Blocs').filter(b => S(b.cours) === S(cid)).map(b => ({ titre: b.titre, texte: b.texte })) : [],
-    sequences: p.preOk ? p.list.map(s => ({ id: s.id, titre: s.titre, virtual: s.virtual, verrouille: !s.unlocked, complete: s.complete, lu: s.lu, lus: s.lus, total: s.req.length,
+    sequences: p.preOk ? p.list.map(s => ({ id: s.id, titre: s.titre, image: s.image, virtual: s.virtual, verrouille: !s.unlocked, complete: s.complete, lu: s.lu, lus: s.lus, total: s.req.length,
       documents: s.unlocked ? s.docs.map(dOut) : [],
       intro: s.unlocked ? s.intro : '',
       quiz: s.nq ? { n: s.nq, seuil: p.cf.seuil, essais: s.att, reussi: s.passed, meilleur: s.best ? { score: s.best.score, total: s.best.total } : null,
         dernier: s.last ? { score: s.last.score, total: s.last.total, corrige: parseDetails_(s.last) } : null } : null })) : [],
     ressources: p.preOk ? p.libres.map(dOut) : [],
-    pretestFacultatif: p.cf.pretestFac, seuil: p.cf.seuil,
+    pretestFacultatif: p.cf.pretestFac, seuil: p.cf.seuil, mode: p.cf.modules ? 'modules' : 'simple',
     verrous: { docs: !p.preOk, post: !p.postOk, preManquant: !p.preOk, seqRestantes: p.list.filter(s => !s.complete).length, seqTotal: p.list.length },
     nbQuestions: { 'Pré-test': qs.filter(q => q.phase === 'Pré-test').length, 'Post-test': qs.filter(q => q.phase === 'Post-test').length },
     resultats: res };
@@ -356,10 +358,12 @@ function adminSaveCourse(pw, c) {
   const titre = S(c && c.titre).trim().slice(0, 120); if (!titre) return { ok: false, message: 'Titre requis.' };
   const desc = S(c.description || '').slice(0, 500);
   const ex = c.id && rows_('Cours').filter(x => S(x.id) === S(c.id))[0];
-  const pre = c.pretest === 'facultatif' ? 'facultatif' : 'obligatoire', sc = S(c.seuil === undefined ? '' : c.seuil).trim(), seuil = sc === '' ? '' : Math.max(0, Math.min(100, Number(sc) || 0));
+  const mode = c.mode === 'modules' ? 'modules' : 'simple', pre = c.pretest === 'facultatif' ? 'facultatif' : 'obligatoire', sc = S(c.seuil === undefined ? '' : c.seuil).trim(), seuil = sc === '' ? '' : Math.max(0, Math.min(100, Number(sc) || 0));
   if (ex) { set_('Cours', ex._r, 'titre', titre); set_('Cours', ex._r, 'description', desc); set_('Cours', ex._r, 'actif', c.actif !== false);
-    if (c.pretest !== undefined) set_('Cours', ex._r, 'pretest', pre); if (c.seuil !== undefined) set_('Cours', ex._r, 'seuil', seuil); return { ok: true, id: S(c.id) }; }
-  const id = id_('c'); add_('Cours', { id, titre, description: desc, actif: true, pretest: pre, seuil }); return { ok: true, id };
+    if (c.mode !== undefined) set_('Cours', ex._r, 'mode', mode); if (c.pretest !== undefined) set_('Cours', ex._r, 'pretest', pre); if (c.seuil !== undefined) set_('Cours', ex._r, 'seuil', seuil); return { ok: true, id: S(c.id) }; }
+  const id = id_('c'); add_('Cours', { id, titre, description: desc, actif: true, pretest: pre, seuil, mode });
+  if (mode === 'modules') add_('Sequences', { id: id_('s'), cours: id, titre: 'Introduction et généralités', ordre: 1 }); // premier module : introduction (quiz facultatif)
+  return { ok: true, id };
 }
 /** doc : { titre, url } ou { titre, fichier: { nom, mime, b64 } } (déposé dans Drive, lisible par lien). */
 /** Identifiant de séquence valide du cours, sinon chaîne vide (hors séquence). */
@@ -372,7 +376,8 @@ function adminAddDoc(pw, cid, doc) {
     f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); url = f.getUrl();
   }
   if (!url) return { ok: false, message: 'Indiquez un lien ou un fichier.' };
-  add_('Documents', { id: id_('d'), cours: S(cid), titre: S(doc.titre || (doc.fichier && doc.fichier.nom) || 'Document').slice(0, 120), url, facultatif: doc.facultatif === true, sequence: seqOk_(cid, doc.sequence) });
+  const type = kind_(url, doc.fichier && doc.fichier.nom, doc.fichier && doc.fichier.mime);
+  add_('Documents', { type, id: id_('d'), cours: S(cid), titre: S(doc.titre || (doc.fichier && doc.fichier.nom) || 'Document').slice(0, 120), url, facultatif: doc.facultatif === true, sequence: seqOk_(cid, doc.sequence) });
   return { ok: true };
 }
 function adminAddQuestion(pw, cid, q) {
@@ -390,9 +395,9 @@ function adminCourseDetail(pw, cid) {
   const c = rows_('Cours').filter(x => S(x.id) === S(cid))[0]; if (!c) return { ok: false, message: 'Cours introuvable.' };
   const mine = r => S(r.cours) === S(cid);
   return { ok: true,
-    cours: { id: S(c.id), titre: c.titre, description: c.description, image: S(c.image), actif: !(c.actif === false || S(c.actif).toUpperCase() === 'FALSE'), pretest: cfg_(cid).pretestFac ? 'facultatif' : 'obligatoire', seuil: cfg_(cid).seuil },
-    sequences: seqs_(cid).map(x => ({ id: S(x.id), titre: x.titre, intro: S(x.intro) })),
-    documents: rows_('Documents').filter(mine).map(d => ({ id: S(d.id), titre: d.titre, url: d.url, facultatif: opt_(d), sequence: seqOk_(cid, d.sequence) })),
+    cours: { id: S(c.id), titre: c.titre, description: c.description, image: S(c.image), actif: !(c.actif === false || S(c.actif).toUpperCase() === 'FALSE'), pretest: cfg_(cid).pretestFac ? 'facultatif' : 'obligatoire', seuil: cfg_(cid).seuil, mode: cfg_(cid).modules ? 'modules' : 'simple' },
+    sequences: seqs_(cid).map(x => ({ id: S(x.id), titre: x.titre, intro: S(x.intro), image: S(x.image) })),
+    documents: rows_('Documents').filter(mine).map(d => ({ id: S(d.id), titre: d.titre, url: d.url, type: S(d.type) || kind_(d.url), facultatif: opt_(d), sequence: seqOk_(cid, d.sequence) })),
     blocs: rows_('Blocs').filter(mine).map(b => ({ id: S(b.id), titre: b.titre, texte: b.texte })),
     questions: rows_('Questions').filter(mine).map(q => ({ id: S(q.id), phase: q.phase, sequence: S(q.sequence), type: typeOf_(q), question: q.question, explication: q.explication })),
     resultats: rows_('Resultats').filter(mine).map(r => ({ pseudo: r.pseudo, phase: r.phase, sequence: S(r.sequence), score: r.score, total: r.total, date: r.date, corrige: parseDetails_(r) })) };
@@ -400,7 +405,9 @@ function adminCourseDetail(pw, cid) {
 function adminDelete(pw, table, id) {
   admin_(pw);
   if (['Documents', 'Questions', 'Blocs'].indexOf(table) < 0) return { ok: false, message: 'Table non autorisée.' };
-  const r = rows_(table).filter(x => S(x.id) === S(id))[0]; if (r) sh_(table).deleteRow(r._r);
+  const r = rows_(table).filter(x => S(x.id) === S(id))[0];
+  if (r && table === 'Documents' && S(r.url).indexOf('html:') === 0) { try { DriveApp.getFileById(S(r.url).slice(5)).setTrashed(true); } catch (e) { } }
+  if (r) sh_(table).deleteRow(r._r);
   return { ok: true };
 }
 /** Élément de texte affiché sur la page du cours (consigne, résumé, objectifs…). */
@@ -543,4 +550,66 @@ function notifs(tok, since) {
     .map(m => ({ id: S(m.id), cours: S(m.cours), titreCours: titre[S(m.cours)], pseudo: names[S(m.uid)] || S(m.pseudo), texte: S(m.texte).slice(0, 140) }));
   const cours = cs.filter(c => c.cree && new Date(c.cree).getTime() > since && !mine[S(c.id)]).map(c => ({ id: S(c.id), titre: c.titre, description: S(c.description).slice(0, 140), image: S(c.image) }));
   return { ok: true, now, messages, cours };
+}
+
+/* ---------- Types de documents, leçons HTML, images de modules ---------- */
+/** Type d'un document d'après son adresse, son nom ou son type MIME. */
+function kind_(url, nom, mime) {
+  const t = (S(url) + ' ' + S(nom) + ' ' + S(mime)).toLowerCase();
+  if (/^html:/.test(S(url))) return 'page';
+  if (/youtube\.com|youtu\.be|vimeo\.com|video\/|\.(mp4|webm|mov|m4v|ogg)(\?|\s|$)/.test(t)) return 'video';
+  if (/\.pdf(\?|\s|$)|pdf/.test(t)) return 'pdf';
+  if (/\.docx?(\?|\s|$)|msword|wordprocessingml|docs\.google\.com\/document/.test(t)) return 'word';
+  if (/\.pptx?(\?|\s|$)|presentation|docs\.google\.com\/presentation/.test(t)) return 'ppt';
+  if (/\.xlsx?(\?|\s|$)|spreadsheet|docs\.google\.com\/spreadsheets/.test(t)) return 'excel';
+  if (/image\/|\.(png|jpe?g|gif|webp)(\?|\s|$)/.test(t)) return 'image';
+  return 'lien';
+}
+/** Dépose une image dans Drive (lisible par lien) et renvoie son adresse d'affichage. */
+function driveImage_(f) {
+  if (!f || !/^image\//.test(S(f.mime))) return { ok: false, message: 'Le fichier doit être une image.' };
+  const file = DriveApp.createFile(Utilities.newBlob(Utilities.base64Decode(f.b64), f.mime, f.nom));
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  return { ok: true, url: 'https://drive.google.com/thumbnail?id=' + file.getId() + '&sz=w1200' };
+}
+/** Image de présentation d'un module (affichée avec son titre ; un clic dessus ouvre le module). img = { fichier } ou { url } ; { url: '' } la retire. */
+function adminSetModuleImage(pw, cid, sid, img) {
+  admin_(pw);
+  const x = seqs_(cid).filter(y => S(y.id) === S(sid))[0]; if (!x) return { ok: false, message: 'Module introuvable.' };
+  let url = '';
+  if (img && img.fichier) { const r = driveImage_(img.fichier); if (!r.ok) return r; url = r.url; }
+  else if (img && S(img.url).trim()) { url = S(img.url).trim(); if (!/^https:\/\//i.test(url)) return { ok: false, message: 'Le lien de l’image doit commencer par https://.' }; }
+  set_('Sequences', x._r, 'image', url); return { ok: true, image: url };
+}
+/** Dépose une image pour l'insérer dans une leçon HTML : renvoie son adresse. */
+function adminUploadImage(pw, cid, img) { admin_(pw); activeCourse_(cid); return driveImage_(img && img.fichier); }
+/** Leçon HTML : page complète (HTML/CSS/JS, personnages, photos…) enregistrée dans Drive et affichée dans un cadre isolé. */
+function adminAddPage(pw, cid, p) {
+  admin_(pw); activeCourse_(cid);
+  const html = S(p && p.html); if (!html.trim()) return { ok: false, message: 'Le code HTML est vide.' };
+  if (html.length > 3000000) return { ok: false, message: 'Page trop volumineuse (3 Mo maximum) : utilisez des images hébergées.' };
+  const titre = S(p.titre || 'Leçon').trim().slice(0, 120) || 'Leçon';
+  const f = DriveApp.createFile(titre + '.html', html, MimeType.HTML);
+  add_('Documents', { id: id_('d'), cours: S(cid), titre, url: 'html:' + f.getId(), facultatif: p.facultatif === true, sequence: seqOk_(cid, p.sequence), type: 'page' });
+  return { ok: true };
+}
+function pageDoc_(did) { const d = rows_('Documents').filter(x => S(x.id) === S(did))[0]; return d && S(d.url).indexOf('html:') === 0 ? d : null; }
+function adminGetPage(pw, did) {
+  admin_(pw); const d = pageDoc_(did); if (!d) return { ok: false, message: 'Leçon introuvable.' };
+  return { ok: true, titre: d.titre, html: DriveApp.getFileById(S(d.url).slice(5)).getBlob().getDataAsString('UTF-8') };
+}
+function adminSavePage(pw, did, p) {
+  admin_(pw); const d = pageDoc_(did); if (!d) return { ok: false, message: 'Leçon introuvable.' };
+  const html = S(p && p.html); if (!html.trim()) return { ok: false, message: 'Le code HTML est vide.' };
+  DriveApp.getFileById(S(d.url).slice(5)).setContent(html);
+  if (S(p.titre).trim()) set_('Documents', d._r, 'titre', S(p.titre).trim().slice(0, 120));
+  return { ok: true };
+}
+/** Renvoie le code d'une leçon HTML à un apprenant inscrit, seulement si le module est ouvert pour lui. */
+function getPage(tok, cid, did) {
+  const u = auth_(tok); activeCourse_(cid); needEnrolled_(u, cid);
+  const d = pageDoc_(did); if (!d || S(d.cours) !== S(cid)) return { ok: false, message: 'Leçon introuvable.' };
+  const p = plan_(u.id, cid); if (!p.preOk) return { ok: false, message: 'Passez d’abord le pré-test.' };
+  const sq = p.list.filter(x => x.docs.some(y => S(y.id) === S(did)))[0]; if (sq && !sq.unlocked) return { ok: false, message: 'Terminez d’abord le module précédent.' };
+  return { ok: true, html: DriveApp.getFileById(S(d.url).slice(5)).getBlob().getDataAsString('UTF-8') };
 }
